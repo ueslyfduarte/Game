@@ -55,7 +55,7 @@ if "day" not in st.session_state:
     st.session_state.day = 1
 
 st.set_page_config(page_title="Cidade Silenciosa – 2.5D", layout="wide")
-st.title("🏙️ Cidade Silenciosa – Mapa 2.5D Isométrico")
+st.title("🏙️ Cidade Silenciosa – Mapa 2.5D (sem mapa real)")
 
 # ---------- Tela de criação de grupo ----------
 if len(st.session_state.players) == 0:
@@ -273,20 +273,19 @@ else:
             st.session_state.player_positions[atual] = (max(0.1, x - passo), y)
             st.rerun()
 
-    # ---------- MAPA 2.5D (ISOMÉTRICO) ----------
+    # ---------- MAPA 2.5D (SEM MAPA REAL) ----------
     st.markdown("---")
     predios, ruas, _ = st.session_state.world
 
-    # Aplica névoa de guerra: prédios escurecidos se não visitados e distantes
+    # Prédios: todos aparecem, mas os não visitados ficam escuros
     predios_vis = []
     for b in predios:
-        visivel = is_visible(b['x'], b['y']) or distance(x, y, b['x'], b['y']) < 0.3
-        if visivel:
-            cor = [120, 120, 120]       # cinza padrão
-            if b['tipo'] == 'policial': cor = [70, 70, 180]
-            elif b['tipo'] == 'medico': cor = [180, 70, 70]
+        if is_visible(b['x'], b['y']) or distance(x, y, b['x'], b['y']) < 0.3:
+            cor = [140, 140, 140]       # cinza médio
+            if b['tipo'] == 'policial': cor = [80, 80, 200]
+            elif b['tipo'] == 'medico': cor = [200, 80, 80]
         else:
-            cor = [50, 50, 50]           # invisível = escuro
+            cor = [50, 50, 50]           # não explorado = escuro
         predios_vis.append({**b, 'cor': cor})
 
     layer_predios = pdk.Layer(
@@ -297,11 +296,9 @@ else:
         elevation_scale=25,
         radius=0.06,
         get_fill_color="cor",
-        pickable=False,
-        auto_highlight=False,
     )
 
-    # Ruas (linhas suaves)
+    # Ruas
     linhas = [{'start': [r['x1'], r['y1']], 'end': [r['x2'], r['y2']]} for r in ruas]
     layer_ruas = pdk.Layer(
         "LineLayer",
@@ -312,7 +309,7 @@ else:
         get_width=2,
     )
 
-    # Zumbis próximos (pontos pretos)
+    # Zumbis próximos
     zumbis_vis = [z for z in st.session_state.zombies if distance(x, y, z['x'], z['y']) < 0.3]
     layer_zumbis = pdk.Layer(
         "ScatterplotLayer",
@@ -323,7 +320,7 @@ else:
         get_fill_color="[0, 0, 0, 220]",
     )
 
-    # Jogador atual (esfera verde)
+    # Jogador atual (verde)
     layer_jogador = pdk.Layer(
         "ScatterplotLayer",
         data=[{'x': x, 'y': y, 'cor': [0, 255, 0]}],
@@ -350,21 +347,24 @@ else:
         get_fill_color="cor",
     )
 
-    # Configuração da câmera ISOMÉTRICA (2.5D)
+    # View isométrica, fundo preto, sem mapa base
     view_state = pdk.ViewState(
         longitude=x,
         latitude=y,
         zoom=12,
-        pitch=60,          # inclinação isométrica
-        bearing=45,        # giro diagonal
+        pitch=60,
+        bearing=45,
     )
 
+    # Deck explicitamente sem mapa
     deck = pdk.Deck(
         layers=[layer_predios, layer_ruas, layer_zumbis, layer_jogador, layer_outros],
         initial_view_state=view_state,
-        map_style=None,                     # sem mapa real!
-        parameters={"clearColor": [20, 20, 20, 255]}  # fundo escuro
+        map_provider=None,        # desabilita qualquer mapa base
+        map_style="",             # string vazia
+        parameters={"clearColor": [10, 10, 10, 255]}  # fundo quase preto
     )
+
     st.pydeck_chart(deck, use_container_width=True)
 
     # Verificar mortes
