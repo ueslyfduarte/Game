@@ -8,16 +8,15 @@ import random
 import math
 
 # ---------- Configurações ----------
-LOCAL_RADIUS_KM = 0.5
-BUILDING_HEIGHT_SCALE = 0.008   # mais altura
-BUILDING_BASE = 0.015           # base maior (15m)
+LOCAL_RADIUS_KM = 0.5            # raio de renderização (ajustado conforme direção)
+BUILDING_HEIGHT_SCALE = 0.008
 MAP_FULL_SIZE = 200
 KM_TO_PIX_FULL = 20
 COR_FUNDO = (20, 20, 20)
 ZOMBIE_DETECT_RADIUS = 0.2
 ZOMBIE_SPEED = 0.03
 
-# Mapeamento de alturas e larguras por tipo
+# Configurações visuais dos prédios
 TYPE_CONFIG = {
     'residencial': {'max_h': 0.02, 'base': 0.025, 'cor': (160, 160, 160)},
     'comercial':    {'max_h': 0.04, 'base': 0.02, 'cor': (200, 200, 100)},
@@ -99,12 +98,12 @@ if "day" not in st.session_state:
 if "last_pos" not in st.session_state:
     st.session_state.last_pos = None
 if "last_direction" not in st.session_state:
-    st.session_state.last_direction = None
+    st.session_state.last_direction = (0, 1)  # começa olhando para norte
 if "action_just_taken" not in st.session_state:
     st.session_state.action_just_taken = False
 
-st.set_page_config(page_title="Cidade Silenciosa 3D", layout="wide")
-st.title("🏙️ Cidade Silenciosa – Exploração 3D")
+st.set_page_config(page_title="Cidade Silenciosa – 1ª Pessoa", layout="wide")
+st.title("🏙️ Cidade Silenciosa – Visão em Primeira Pessoa")
 
 # ---------- Tela de criação de grupo ----------
 if len(st.session_state.players) == 0:
@@ -139,6 +138,7 @@ else:
         st.session_state.action_just_taken = False
 
     mark_visited(x, y)
+    # Atualiza direção baseada no movimento (mantém a última)
     if st.session_state.last_pos is not None:
         old_x, old_y = st.session_state.last_pos
         dx = x - old_x
@@ -191,7 +191,7 @@ else:
         arma = jogador.equipped_weapon['nome'] if jogador.equipped_weapon else "Desarmado"
         st.write(f"**Arma:** {arma}")
 
-    # Abas inventário / diário
+    # Abas inventário / diário (mantidas iguais)
     tab1, tab2 = st.tabs(["🎒 Inventário", "📜 Diário"])
     with tab1:
         if not jogador.inventory:
@@ -330,17 +330,35 @@ else:
         st.session_state.action_just_taken = True
         st.rerun()
 
-    # ---------- MAPA 3D LOCAL ----------
+    # ---------- MAPA 3D EM PRIMEIRA PESSOA ----------
     st.markdown("---")
     col_map1, col_map2 = st.columns([3, 1])
 
     with col_map1:
-        st.subheader("🏢 Visão 3D (raio de 0.5 km)")
+        st.subheader("👁️ Visão em Primeira Pessoa")
         predios, ruas, _ = st.session_state.world
-        x_min, x_max = x - LOCAL_RADIUS_KM, x + LOCAL_RADIUS_KM
-        y_min, y_max = y - LOCAL_RADIUS_KM, y + LOCAL_RADIUS_KM
 
-        # Chão da cidade
+        # Direção atual
+        dir_x, dir_y = st.session_state.last_direction
+
+        # Define a área visível como um retângulo à frente (0.5 km de profundidade, largura 0.3 km)
+        depth = 0.5
+        width = 0.3
+        # Vetor perpendicular à direção (para largura)
+        perp_x = -dir_y
+        perp_y = dir_x
+
+        # Centro da área visível
+        center_x = x + dir_x * (depth / 2)
+        center_y = y + dir_y * (depth / 2)
+
+        # Limites do bounding box
+        x_min = center_x - abs(perp_x) * width/2 - abs(dir_x) * depth/2
+        x_max = center_x + abs(perp_x) * width/2 + abs(dir_x) * depth/2
+        y_min = center_y - abs(perp_y) * width/2 - abs(dir_y) * depth/2
+        y_max = center_y + abs(perp_y) * width/2 + abs(dir_y) * depth/2
+
+        # Chão da cidade (apenas na área visível)
         vertices_floor = [
             [x_min, y_min, 0], [x_max, y_min, 0], [x_max, y_max, 0], [x_min, y_max, 0]
         ]
@@ -357,7 +375,7 @@ else:
             name='Chão'
         )
 
-        # Prédios
+        # Prédios visíveis
         vertices = []
         faces = []
         cores_predios = []
@@ -365,7 +383,7 @@ else:
             if x_min <= b['x'] <= x_max and y_min <= b['y'] <= y_max:
                 cfg = TYPE_CONFIG.get(b['tipo'], TYPE_CONFIG['residencial'])
                 h = min(cfg['max_h'], b['altura'] * BUILDING_HEIGHT_SCALE)
-                h = max(h, 0.005)  # pelo menos 5 metros
+                h = max(h, 0.005)
                 base = cfg['base']
                 cor = cfg['cor']
                 add_building_mesh(vertices, faces, b['x'], b['y'], base, h)
@@ -379,43 +397,35 @@ else:
             k=[face[2] for face in faces],
             facecolor=[f'rgb({c[0]},{c[1]},{c[2]})' for c in cores_predios],
             opacity=1.0,
-            name='Prédios',
-            flatshading=True
+            flatshading=True,
+            name='Prédios'
         )
 
-        # Ruas como faixas largas (linhas grossas)
+        # Ruas e calçadas (dentro da área)
         ruas_x, ruas_y, ruas_z = [], [], []
+        calcadas_x, calcadas_y, calcadas_z = [], [], []
+        offset = 0.015
         for r in ruas:
             if (x_min <= r['x1'] <= x_max and y_min <= r['y1'] <= y_max) or \
                (x_min <= r['x2'] <= x_max and y_min <= r['y2'] <= y_max):
                 ruas_x.extend([r['x1'], r['x2'], None])
                 ruas_y.extend([r['y1'], r['y2'], None])
                 ruas_z.extend([0.001, 0.001, None])
+                if r['x1'] == r['x2']:  # vertical
+                    calcadas_x.extend([r['x1']-offset, r['x1']-offset, None, r['x1']+offset, r['x1']+offset, None])
+                    calcadas_y.extend([r['y1'], r['y2'], None, r['y1'], r['y2'], None])
+                    calcadas_z.extend([0.001, 0.001, None, 0.001, 0.001, None])
+                else:  # horizontal
+                    calcadas_y.extend([r['y1']-offset, r['y1']-offset, None, r['y1']+offset, r['y1']+offset, None])
+                    calcadas_x.extend([r['x1'], r['x2'], None, r['x1'], r['x2'], None])
+                    calcadas_z.extend([0.001, 0.001, None, 0.001, 0.001, None])
         trace_ruas = go.Scatter3d(
             x=ruas_x, y=ruas_y, z=ruas_z,
-            mode='lines',
-            line=dict(color='lightgray', width=4),
-            name='Ruas'
+            mode='lines', line=dict(color='lightgray', width=4), name='Ruas'
         )
-        # Calçadas (linhas brancas ao lado das ruas)
-        calcadas_x, calcadas_y, calcadas_z = [], [], []
-        offset = 0.015
-        for r in ruas:
-            if r['x1'] == r['x2']:  # vertical
-                x = r['x1']
-                calcadas_x.extend([x - offset, x - offset, None, x + offset, x + offset, None])
-                calcadas_y.extend([r['y1'], r['y2'], None, r['y1'], r['y2'], None])
-                calcadas_z.extend([0.001, 0.001, None, 0.001, 0.001, None])
-            else:  # horizontal
-                y = r['y1']
-                calcadas_y.extend([y - offset, y - offset, None, y + offset, y + offset, None])
-                calcadas_x.extend([r['x1'], r['x2'], None, r['x1'], r['x2'], None])
-                calcadas_z.extend([0.001, 0.001, None, 0.001, 0.001, None])
         trace_calcadas = go.Scatter3d(
             x=calcadas_x, y=calcadas_y, z=calcadas_z,
-            mode='lines',
-            line=dict(color='white', width=1.5),
-            name='Calçadas'
+            mode='lines', line=dict(color='white', width=1.5), name='Calçadas'
         )
 
         # Zumbis
@@ -427,12 +437,10 @@ else:
                 zumbis_z.append(0.005)
         trace_zumbis = go.Scatter3d(
             x=zumbis_x, y=zumbis_y, z=zumbis_z,
-            mode='markers',
-            marker=dict(size=3, color='black'),
-            name='Zumbis'
+            mode='markers', marker=dict(size=5, color='black'), name='Zumbis'
         )
 
-        # Outros jogadores
+        # Outros jogadores (visíveis apenas se aliados ou próximos)
         outros_x, outros_y, outros_z = [], [], []
         cores_outros = []
         for i, p in enumerate(st.session_state.players):
@@ -446,51 +454,41 @@ else:
                     cores_outros.append('blue' if rel == 'ally' else 'red')
         trace_outros = go.Scatter3d(
             x=outros_x, y=outros_y, z=outros_z,
-            mode='markers',
-            marker=dict(size=6, color=cores_outros),
-            name='Outros'
+            mode='markers', marker=dict(size=8, color=cores_outros), name='Outros'
         )
 
-        # Jogador
-        trace_jogador = go.Scatter3d(
-            x=[x], y=[y], z=[0.015],
-            mode='markers',
-            marker=dict(size=10, color='lime', symbol='circle'),
-            name=jogador.name
+        # Mira central (linha vertical sutil)
+        mira_x = [x + dir_x * 0.02, x + dir_x * 0.08]
+        mira_y = [y + dir_y * 0.02, y + dir_y * 0.08]
+        mira_z = [0.01, 0.01]
+        trace_mira = go.Scatter3d(
+            x=mira_x, y=mira_y, z=mira_z,
+            mode='lines', line=dict(color='white', width=2), name='Mira'
         )
 
-        # Seta de direção
-        direcao_trace = None
-        if st.session_state.last_direction is not None:
-            dx, dy = st.session_state.last_direction
-            comp = 0.04
-            end_x = x + dx * comp
-            end_y = y + dy * comp
-            direcao_trace = go.Scatter3d(
-                x=[x, end_x], y=[y, end_y], z=[0.015, 0.015],
-                mode='lines',
-                line=dict(color='yellow', width=6),
-                name='Direção'
-            )
+        # Configuração da câmera em primeira pessoa
+        eye = dict(x=x, y=y, z=0.015)  # altura dos olhos
+        center = dict(x=x + dir_x * 0.3, y=y + dir_y * 0.3, z=0.015)  # olhando 300m à frente
+        camera = dict(eye=eye, center=center)
 
         fig = go.Figure(data=[
             mesh_floor, mesh_predios, trace_ruas, trace_calcadas,
-            trace_zumbis, trace_outros, trace_jogador
-        ] + ([direcao_trace] if direcao_trace else []))
+            trace_zumbis, trace_outros, trace_mira
+        ])
         fig.update_layout(
             scene=dict(
                 xaxis=dict(range=[x_min, x_max], visible=False),
                 yaxis=dict(range=[y_min, y_max], visible=False),
-                zaxis=dict(range=[0, 0.1], visible=False),
+                zaxis=dict(range=[0, 0.15], visible=False),
                 aspectmode='manual',
                 aspectratio=dict(x=1, y=1, z=0.4),
-                bgcolor='rgb(20,20,20)'
+                bgcolor='rgb(20,20,20)',
+                camera=camera
             ),
             paper_bgcolor='rgb(20,20,20)',
             margin=dict(l=0, r=0, t=0, b=0),
             showlegend=False
         )
-        fig.update_scenes(camera=dict(eye=dict(x=2.0, y=2.0, z=1.2)))
         st.plotly_chart(fig, use_container_width=True)
 
     with col_map2:
