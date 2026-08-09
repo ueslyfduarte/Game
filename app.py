@@ -329,6 +329,7 @@ else:
 
     # ---------- MAPA EM PRIMEIRA PESSOA REALISTA ----------
     # ---------- MAPA EM PRIMEIRA PESSOA REALISTA (TRAVADO) ----------
+    # ---------- MAPA EM PRIMEIRA PESSOA REALISTA (TRAVADO) ----------
     st.markdown("---")
     col_map1, col_map2 = st.columns([3, 1])
 
@@ -355,6 +356,11 @@ else:
         center_x = x + dir_x * look_distance
         center_y = y + dir_y * look_distance
         center_z = eye_height - 0.03 * look_distance   # olhar ligeiramente inclinado
+
+        # Posição dos olhos (igual à posição do jogador)
+        eye_x = x
+        eye_y = y
+        eye_z = eye_height
 
         # Calcula os quatro cantos do frustum (cone de visão)
         far_center_x = x + dir_x * max_depth
@@ -396,8 +402,7 @@ else:
         cores_predios = []
         for b in predios:
             if x_min <= b['x'] <= x_max and y_min <= b['y'] <= y_max:
-                # não renderiza prédios atrás do jogador (economia de vértices)
-                # (filtro simples: produto escalar positivo)
+                # não renderiza prédios atrás do jogador
                 vec_x = b['x'] - x
                 vec_y = b['y'] - y
                 dot = vec_x * dir_x + vec_y * dir_y
@@ -424,10 +429,9 @@ else:
             name='Prédios'
         )
 
-        # Ruas (apenas as visíveis dentro do cone)
+        # Ruas
         ruas_x, ruas_y, ruas_z = [], [], []
         for r in ruas:
-            # verifica se algum ponto da rua está dentro do bounding box
             if not (x_min <= r['x1'] <= x_max and y_min <= r['y1'] <= y_max) and \
                not (x_min <= r['x2'] <= x_max and y_min <= r['y2'] <= y_max):
                 continue
@@ -440,7 +444,7 @@ else:
             name='Ruas'
         )
 
-        # Faixa central amarela (apenas nas ruas visíveis)
+        # Faixa central amarela
         faixa_x, faixa_y, faixa_z = [], [], []
         for r in ruas:
             if not (x_min <= r['x1'] <= x_max and y_min <= r['y1'] <= y_max) and \
@@ -460,7 +464,7 @@ else:
             name='Faixa'
         )
 
-        # Zumbis (apenas os que estão à frente e dentro do raio)
+        # Zumbis
         zumbis_x, zumbis_y, zumbis_z = [], [], []
         for z in st.session_state.zombies:
             if x_min <= z['x'] <= x_max and y_min <= z['y'] <= y_max:
@@ -474,7 +478,7 @@ else:
             name='Zumbis'
         )
 
-        # Outros jogadores (se aliados ou próximos)
+        # Outros jogadores
         outros_x, outros_y, outros_z = [], [], []
         cores_outros = []
         for i, p in enumerate(st.session_state.players):
@@ -493,7 +497,7 @@ else:
             name='Outros'
         )
 
-        # Mira central (ponto branco)
+        # Mira central
         mira_dist = 0.03
         mira_x = [x + dir_x * mira_dist]
         mira_y = [y + dir_y * mira_dist]
@@ -509,9 +513,9 @@ else:
             showlegend=False
         )
 
-        # Configuração da câmera travada em primeira pessoa
+        # Configuração da câmera travada
         camera = dict(
-            eye=dict(x=x, y=y, z=eye_height),
+            eye=dict(x=eye_x, y=eye_y, z=eye_z),
             center=dict(x=center_x, y=center_y, z=center_z),
             projection=dict(type='perspective')
         )
@@ -529,12 +533,12 @@ else:
                 aspectratio=dict(x=1, y=1, z=0.4),
                 bgcolor='rgb(10,10,20)',
                 camera=camera,
-                dragmode=False,       # impede o usuário de girar
+                dragmode=False,
             ),
             paper_bgcolor='rgb(10,10,20)',
             margin=dict(l=0, r=0, t=0, b=0),
             showlegend=False,
-            uirevision='firstperson'   # mantém a câmera fixa entre reruns
+            uirevision='firstperson'
         )
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
@@ -554,9 +558,7 @@ else:
         for i, p in enumerate(st.session_state.players):
             px, py = world_to_mini(*st.session_state.player_positions[i])
             if i == atual:
-                # desenha uma seta indicando direção no minimapa
                 draw_mini.ellipse([(px-3, py-3), (px+3, py+3)], fill=(0,255,0))
-                # seta de direção
                 end_x = px + st.session_state.last_direction[0] * 6
                 end_y = py + st.session_state.last_direction[1] * 6
                 draw_mini.line([(px, py), (end_x, end_y)], fill=(255,255,0), width=2)
@@ -564,199 +566,6 @@ else:
                 rel = get_relation(atual, i)
                 cor = (0,0,255) if rel == 'ally' else (255,0,0)
                 draw_mini.ellipse([(px-2, py-2), (px+2, py+2)], fill=cor)
-        st.image(img_mini, use_container_width=True, caption="Cidade (10x10 km)")
-
-    # Verificar mortes
-    for i, p in enumerate(st.session_state.players):
-        if not p.is_alive():
-            st.error(f"💀 {p.name} morreu!")
-        # Chão
-        vertices_floor = [
-            [x_min, y_min, 0], [x_max, y_min, 0], [x_max, y_max, 0], [x_min, y_max, 0]
-        ]
-        faces_floor = [[0, 1, 2], [0, 2, 3]]
-        mesh_floor = go.Mesh3d(
-            x=[v[0] for v in vertices_floor],
-            y=[v[1] for v in vertices_floor],
-            z=[v[2] for v in vertices_floor],
-            i=[f[0] for f in faces_floor],
-            j=[f[1] for f in faces_floor],
-            k=[f[2] for f in faces_floor],
-            facecolor=['rgb(25,25,25)', 'rgb(25,25,25)'],
-            opacity=1.0,
-            name='Chão',
-            lighting=dict(ambient=0.5, diffuse=0.5, specular=0.1, roughness=0.5)
-        )
-
-        # Prédios
-        vertices = []
-        faces = []
-        cores_predios = []
-        for b in predios:
-            if x_min <= b['x'] <= x_max and y_min <= b['y'] <= y_max:
-                cfg = TYPE_CONFIG.get(b['tipo'], TYPE_CONFIG['residencial'])
-                h = min(cfg['max_h'], b['altura'] * BUILDING_HEIGHT_SCALE)
-                h = max(h, 0.005)
-                base = cfg['base']
-                cor = cfg['cor']
-                add_building_mesh(vertices, faces, b['x'], b['y'], base, h)
-                cores_predios.extend([cor] * 12)
-        mesh_predios = go.Mesh3d(
-            x=[v[0] for v in vertices],
-            y=[v[1] for v in vertices],
-            z=[v[2] for v in vertices],
-            i=[face[0] for face in faces],
-            j=[face[1] for face in faces],
-            k=[face[2] for face in faces],
-            facecolor=[f'rgb({c[0]},{c[1]},{c[2]})' for c in cores_predios],
-            opacity=1.0,
-            flatshading=True,
-            name='Prédios',
-            lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.3)
-        )
-
-        # Ruas (faixas cinza)
-        ruas_x, ruas_y, ruas_z = [], [], []
-        for r in ruas:
-            if (x_min <= r['x1'] <= x_max and y_min <= r['y1'] <= y_max) or \
-               (x_min <= r['x2'] <= x_max and y_min <= r['y2'] <= y_max):
-                ruas_x.extend([r['x1'], r['x2'], None])
-                ruas_y.extend([r['y1'], r['y2'], None])
-                ruas_z.extend([0.001, 0.001, None])
-        trace_ruas = go.Scatter3d(
-            x=ruas_x, y=ruas_y, z=ruas_z,
-            mode='lines', line=dict(color='darkgray', width=6), name='Ruas'
-        )
-
-        # Faixa central amarela
-        faixa_x, faixa_y, faixa_z = [], [], []
-        for r in ruas:
-            if r['x1'] == r['x2']:
-                if x_min <= r['x1'] <= x_max:
-                    faixa_x.extend([r['x1'], r['x1'], None])
-                    faixa_y.extend([r['y1'], r['y2'], None])
-                    faixa_z.extend([0.002, 0.002, None])
-            else:
-                if y_min <= r['y1'] <= y_max:
-                    faixa_x.extend([r['x1'], r['x2'], None])
-                    faixa_y.extend([r['y1'], r['y1'], None])
-                    faixa_z.extend([0.002, 0.002, None])
-        trace_faixa = go.Scatter3d(
-            x=faixa_x, y=faixa_y, z=faixa_z,
-            mode='lines', line=dict(color='gold', width=2, dash='dot'), name='Faixa'
-        )
-
-        # Calçadas
-        calcadas_x, calcadas_y, calcadas_z = [], [], []
-        offset = 0.015
-        for r in ruas:
-            if r['x1'] == r['x2']:
-                if (x_min <= r['x1']-offset <= x_max) or (x_min <= r['x1']+offset <= x_max):
-                    calcadas_x.extend([r['x1']-offset, r['x1']-offset, None, r['x1']+offset, r['x1']+offset, None])
-                    calcadas_y.extend([r['y1'], r['y2'], None, r['y1'], r['y2'], None])
-                    calcadas_z.extend([0.003, 0.003, None, 0.003, 0.003, None])
-            else:
-                if (y_min <= r['y1']-offset <= y_max) or (y_min <= r['y1']+offset <= y_max):
-                    calcadas_y.extend([r['y1']-offset, r['y1']-offset, None, r['y1']+offset, r['y1']+offset, None])
-                    calcadas_x.extend([r['x1'], r['x2'], None, r['x1'], r['x2'], None])
-                    calcadas_z.extend([0.003, 0.003, None, 0.003, 0.003, None])
-        trace_calcadas = go.Scatter3d(
-            x=calcadas_x, y=calcadas_y, z=calcadas_z,
-            mode='lines', line=dict(color='white', width=2), name='Calçadas'
-        )
-
-        # Zumbis
-        zumbis_x, zumbis_y, zumbis_z = [], [], []
-        for z in st.session_state.zombies:
-            if x_min <= z['x'] <= x_max and y_min <= z['y'] <= y_max:
-                zumbis_x.append(z['x'])
-                zumbis_y.append(z['y'])
-                zumbis_z.append(0.008)
-        trace_zumbis = go.Scatter3d(
-            x=zumbis_x, y=zumbis_y, z=zumbis_z,
-            mode='markers', marker=dict(size=8, color='black'),
-            name='Zumbis'
-        )
-
-        # Outros jogadores
-        outros_x, outros_y, outros_z = [], [], []
-        cores_outros = []
-        for i, p in enumerate(st.session_state.players):
-            if i != atual:
-                px, py = st.session_state.player_positions[i]
-                if x_min <= px <= x_max and y_min <= py <= y_max:
-                    outros_x.append(px)
-                    outros_y.append(py)
-                    outros_z.append(0.01)
-                    rel = get_relation(atual, i)
-                    cores_outros.append('blue' if rel == 'ally' else 'red')
-        trace_outros = go.Scatter3d(
-            x=outros_x, y=outros_y, z=outros_z,
-            mode='markers', marker=dict(size=10, color=cores_outros),
-            name='Outros'
-        )
-
-        # Mira (ponto central)
-        # Mira (ponto central)
-        mira_dist = 0.05
-        mira_x = [x + dir_x * mira_dist]
-        mira_y = [y + dir_y * mira_dist]
-        mira_z = [eye_height]
-        trace_mira = go.Scatter3d(
-            x=mira_x, y=mira_y, z=mira_z,
-            mode='markers',
-            marker=dict(size=6, color='white', symbol='cross'),
-            name='Mira'
-        )
-
-        # Configuração da câmera
-        camera = dict(
-            eye=dict(x=eye_x, y=eye_y, z=eye_z),
-            center=dict(x=center_x, y=center_y, z=center_z),
-            projection=dict(type='perspective')
-        )
-
-        fig = go.Figure(data=[
-            mesh_floor, mesh_predios, trace_ruas, trace_faixa, trace_calcadas,
-            trace_zumbis, trace_outros, trace_mira
-        ])
-        fig.update_layout(
-            scene=dict(
-                xaxis=dict(range=[x_min, x_max], visible=False),
-                yaxis=dict(range=[y_min, y_max], visible=False),
-                zaxis=dict(range=[0, 0.15], visible=False),
-                aspectmode='manual',
-                aspectratio=dict(x=1, y=1, z=0.4),
-                bgcolor='rgb(10,10,20)',
-                camera=camera
-            ),
-            paper_bgcolor='rgb(10,10,20)',
-            margin=dict(l=0, r=0, t=0, b=0),
-            showlegend=False
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_map2:
-        st.subheader("🧭 Minimapa")
-        img_mini = Image.new('RGB', (MAP_FULL_SIZE, MAP_FULL_SIZE), COR_FUNDO)
-        draw_mini = ImageDraw.Draw(img_mini)
-        def world_to_mini(wx, wy):
-            return int(wx * KM_TO_PIX_FULL), int(wy * KM_TO_PIX_FULL)
-        for (cx, cy) in st.session_state.visited:
-            x0, y0 = int(cx * 2), int(cy * 2)
-            draw_mini.rectangle([(x0, y0), (x0+2, y0+2)], fill=(60,60,60))
-        for r in ruas:
-            p1 = world_to_mini(r['x1'], r['y1'])
-            p2 = world_to_mini(r['x2'], r['y2'])
-            draw_mini.line([p1, p2], fill=(80,80,80), width=1)
-        for i, p in enumerate(st.session_state.players):
-            px, py = world_to_mini(*st.session_state.player_positions[i])
-            if i == atual:
-                cor = (0,255,0)
-            else:
-                rel = get_relation(atual, i)
-                cor = (0,0,255) if rel == 'ally' else (255,0,0)
-            draw_mini.ellipse([(px-2, py-2), (px+2, py+2)], fill=cor)
         st.image(img_mini, use_container_width=True, caption="Cidade (10x10 km)")
 
     # Verificar mortes
