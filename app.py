@@ -54,8 +54,8 @@ if "visited" not in st.session_state:
 if "day" not in st.session_state:
     st.session_state.day = 1
 
-st.set_page_config(page_title="Cidade Silenciosa – Hardcore Survival", layout="wide")
-st.title("🏙️ Cidade Silenciosa – 25.000 zumbis")
+st.set_page_config(page_title="Cidade Silenciosa – 2.5D", layout="wide")
+st.title("🏙️ Cidade Silenciosa – Mapa 2.5D Isométrico")
 
 # ---------- Tela de criação de grupo ----------
 if len(st.session_state.players) == 0:
@@ -206,7 +206,6 @@ else:
             jogador.rest()
             st.session_state.day += 1
             diario(f"{jogador.name} descansa. Um novo dia amanhece.")
-            # Degradação de habilidades
             if random.randint(1,3) == 1:
                 jogador.degrade_skills()
             st.rerun()
@@ -220,7 +219,6 @@ else:
                 for poi in pois:
                     if not poi['looted'] and distance(x, y, poi['x'], poi['y']) < 0.03:
                         tabela = get_loot_table(poi['tipo'], poi['tier'])
-                        # Sorteia um item
                         total_chance = sum(p for _, p in tabela)
                         if total_chance == 0:
                             diario(f"{jogador.name} vasculha um(a) {poi['tipo']}, mas está vazio.")
@@ -230,7 +228,6 @@ else:
                             for item, prob in tabela:
                                 acum += prob
                                 if r <= acum:
-                                    # Adiciona ao inventário
                                     peso = 0.5
                                     if 'arma' in item.lower():
                                         peso = 2.0
@@ -276,96 +273,99 @@ else:
             st.session_state.player_positions[atual] = (max(0.1, x - passo), y)
             st.rerun()
 
-    # ---------- MAPA 3D ----------
+    # ---------- MAPA 2.5D (ISOMÉTRICO) ----------
     st.markdown("---")
     predios, ruas, _ = st.session_state.world
 
-    # Prédios visíveis (apenas visitados ou próximos)
+    # Aplica névoa de guerra: prédios escurecidos se não visitados e distantes
     predios_vis = []
     for b in predios:
-        if is_visible(b['x'], b['y']) or distance(x, y, b['x'], b['y']) < 0.3:
-            cor = [150, 150, 150]
-            if b['tipo'] == 'policial':
-                cor = [50, 50, 200]
-            elif b['tipo'] == 'medico':
-                cor = [200, 50, 50]
-            predios_vis.append({**b, 'cor': cor})
+        visivel = is_visible(b['x'], b['y']) or distance(x, y, b['x'], b['y']) < 0.3
+        if visivel:
+            cor = [120, 120, 120]       # cinza padrão
+            if b['tipo'] == 'policial': cor = [70, 70, 180]
+            elif b['tipo'] == 'medico': cor = [180, 70, 70]
+        else:
+            cor = [50, 50, 50]           # invisível = escuro
+        predios_vis.append({**b, 'cor': cor})
+
     layer_predios = pdk.Layer(
         "ColumnLayer",
         data=predios_vis,
         get_position="[x, y]",
         get_elevation="altura",
-        elevation_scale=20,
-        radius=0.05,
+        elevation_scale=25,
+        radius=0.06,
         get_fill_color="cor",
-        pickable=True
+        pickable=False,
+        auto_highlight=False,
     )
 
-    # Ruas
-    linhas = []
-    for r in ruas:
-        linhas.append({'start': [r['x1'], r['y1']], 'end': [r['x2'], r['y2']]})
+    # Ruas (linhas suaves)
+    linhas = [{'start': [r['x1'], r['y1']], 'end': [r['x2'], r['y2']]} for r in ruas]
     layer_ruas = pdk.Layer(
         "LineLayer",
         data=linhas,
         get_source_position="start",
         get_target_position="end",
-        get_color="[200, 200, 200, 150]",
-        get_width=2
+        get_color="[180, 180, 180, 200]",
+        get_width=2,
     )
 
-    # Zumbis próximos (raio de 0.3 km)
+    # Zumbis próximos (pontos pretos)
     zumbis_vis = [z for z in st.session_state.zombies if distance(x, y, z['x'], z['y']) < 0.3]
     layer_zumbis = pdk.Layer(
         "ScatterplotLayer",
         data=zumbis_vis,
         get_position="[x, y]",
-        get_radius=0.015,
-        radius_scale=30,
-        get_fill_color="[0, 0, 0, 200]"
+        get_radius=0.02,
+        radius_scale=20,
+        get_fill_color="[0, 0, 0, 220]",
     )
 
-    # Jogador atual
+    # Jogador atual (esfera verde)
     layer_jogador = pdk.Layer(
         "ScatterplotLayer",
-        data=[{'x': x, 'y': y, 'cor': [0,255,0]}],
+        data=[{'x': x, 'y': y, 'cor': [0, 255, 0]}],
         get_position="[x, y]",
-        get_radius=0.05,
-        radius_scale=30,
-        get_fill_color="cor"
+        get_radius=0.06,
+        radius_scale=25,
+        get_fill_color="cor",
     )
 
-    # Outros jogadores (aliados azuis, inimigos vermelhos)
+    # Outros jogadores
     outros = []
     for i, p in enumerate(st.session_state.players):
         if i != atual:
             px, py = st.session_state.player_positions[i]
             rel = get_relation(atual, i)
-            cor = [0,0,255] if rel == 'ally' else [255,0,0]
-            outros.append({'x': px, 'y': py, 'cor': cor, 'nome': p.name})
+            cor = [0, 0, 255] if rel == 'ally' else [255, 0, 0]
+            outros.append({'x': px, 'y': py, 'cor': cor})
     layer_outros = pdk.Layer(
         "ScatterplotLayer",
         data=outros,
         get_position="[x, y]",
-        get_radius=0.05,
-        radius_scale=30,
-        get_fill_color="cor"
+        get_radius=0.06,
+        radius_scale=25,
+        get_fill_color="cor",
     )
 
+    # Configuração da câmera ISOMÉTRICA (2.5D)
     view_state = pdk.ViewState(
         longitude=x,
         latitude=y,
-        zoom=13,
-        pitch=50,
-        bearing=0
+        zoom=12,
+        pitch=60,          # inclinação isométrica
+        bearing=45,        # giro diagonal
     )
 
     deck = pdk.Deck(
         layers=[layer_predios, layer_ruas, layer_zumbis, layer_jogador, layer_outros],
         initial_view_state=view_state,
-        map_style=None
+        map_style=None,                     # sem mapa real!
+        parameters={"clearColor": [20, 20, 20, 255]}  # fundo escuro
     )
-    st.pydeck_chart(deck)
+    st.pydeck_chart(deck, use_container_width=True)
 
     # Verificar mortes
     for i, p in enumerate(st.session_state.players):
