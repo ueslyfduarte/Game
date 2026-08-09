@@ -1,126 +1,35 @@
 import streamlit as st
 from player import Player
-from mapa_gerador import criar_mapa_base
-import folium
-from streamlit_folium import st_folium
+from mapa_gerador import gerar_mundo, gerar_zumbis, get_loot_table
+import pydeck as pdk
 import random
 import math
-import base64
-from io import BytesIO
 
 # ---------- Funções auxiliares ----------
-def distance(pos1, pos2):
-    return math.sqrt((pos1[0]-pos2[0])**2 + (pos1[1]-pos2[1])**2)
+def distance(x1, y1, x2, y2):
+    return math.sqrt((x1-x2)**2 + (y1-y2)**2)
 
 def get_relation(player_idx, other_idx):
-    if player_idx == other_idx:
-        return 'self'
-    relations = st.session_state.player_relations.get(player_idx, {})
-    return relations.get(other_idx, 'ally')
+    if player_idx == other_idx: return 'self'
+    return st.session_state.player_relations.get(player_idx, {}).get(other_idx, 'ally')
 
 def make_noise(radius, turns=1):
     st.session_state.action_noise[st.session_state.current_player_index] = {
-        'radius': radius,
-        'turns_left': turns
+        'radius': radius, 'turns_left': turns
     }
 
-def gerar_zumbis(density):
-    zombies = []
-    num = density * 3
-    for _ in range(num):
-        regiao = random.choices(
-            ['sul', 'centro', 'norte'],
-            weights=[0.1, 0.5, 0.4]
-        )[0]
-        if regiao == 'sul':
-            lat = random.uniform(0, 1)
-            lon = random.uniform(0.4, 1.0)   # sul
-        elif regiao == 'centro':
-            lat = random.uniform(0, 1)
-            lon = random.uniform(0.85, 0.4)  # centro
-        else:
-            lat = random.uniform(0, 1)
-            lon = random.uniform(0, 0.85)    # norte
-        zombies.append([lat, lon])
-    return zombies
+def update_visited(x, y):
+    cx = int(x * 10)
+    cy = int(y * 10)
+    st.session_state.visited.add((cx, cy))
 
-def gerar_pois():
-    pois = []
-    # POIs normais (800) – no centro (lat 0.4 a 0.85, lon 0.15 a 0.85)
-    for _ in range(800):
-        lat = random.uniform(0.15, 0.85)
-        lon = random.uniform(0.4, 0.85)
-        chance = random.uniform(0, 0.6)
-        pois.append({
-            'pos': [lat, lon],
-            'chance': chance,
-            'looted': False,
-            'tipo': 'normal'
-        })
-    # POIs avançados (200) – apenas no norte (lon 0.85 a 1.0, lat 0.15 a 0.85)
-    for _ in range(200):
-        lat = random.uniform(0.15, 0.85)
-        lon = random.uniform(0.85, 1.0)
-        pois.append({
-            'pos': [lat, lon],
-            'chance': 0.8,
-            'looted': False,
-            'tipo': 'avancado'
-        })
-    random.shuffle(pois)
-    return pois
+def is_visible(x, y):
+    cx = int(x * 10)
+    cy = int(y * 10)
+    return (cx, cy) in st.session_state.visited
 
-def vasculhar_ponto(player, poi):
-    cost = player.use_stamina(5, 'other')
-    make_noise(radius=0.003)
-
-    if poi['tipo'] == 'avancado' and random.random() < 0.3:
-        player.take_damage(15, reason="zumbi")
-        make_noise(radius=0.015)
-        return f"{player.name} é atacado por um Juggernaut enquanto vasculha! (-15 HP)"
-    if poi['tipo'] == 'normal' and random.random() < 0.1:
-        player.take_damage(8, reason="zumbi")
-        make_noise(radius=0.01)
-        return f"{player.name} encontra um zumbi escondido. (-8 HP)"
-
-    if random.random() < poi['chance']:
-        if poi['tipo'] == 'normal':
-            tipo = random.choices(['comida', 'água', 'remédio'], weights=[50, 30, 20])[0]
-            if tipo == 'comida':
-                amount = random.randint(20, 30)
-                player.eat(amount, "bom")
-                return f"{player.name} acha comida (+{amount} fome)."
-            elif tipo == 'água':
-                amount = random.randint(20, 30)
-                player.drink(amount, "limpa")
-                return f"{player.name} encontra água (+{amount} sede)."
-            else:
-                player.treat_infection(30)
-                player.gain_skill_xp("medicina")
-                return f"{player.name} pega um kit médico (-30 infecção)."
-        else:  # avançado
-            loot = random.choices(
-                ['arma_branca', 'arma_fogo', 'colete', 'municao'],
-                weights=[30, 20, 20, 30]
-            )[0]
-            if loot == 'arma_branca':
-                player.gain_skill_xp("armas_brancas", 2)
-                return f"{player.name} encontra uma faca tática! (+2 XP armas brancas)"
-            elif loot == 'arma_fogo':
-                player.gain_skill_xp("armas_fogo", 2)
-                return f"{player.name} acha uma pistola danificada, mas útil! (+2 XP armas de fogo)"
-            elif loot == 'colete':
-                player.temp_defense = 0.2
-                return f"{player.name} veste um colete leve (reduz dano em 20% temporariamente)."
-            else:
-                return f"{player.name} encontra uma caixa de munição (9mm)."
-    else:
-        falhas = [
-            f"{player.name} revira escombros, mas não encontra nada útil.",
-            f"{player.name} vasculha um armário vazio.",
-            f"{player.name} só encontra poeira e insetos."
-        ]
-        return random.choice(falhas)
+def diario(entrada):
+    st.session_state.diary.append(f"Dia {st.session_state.day}: {entrada}")
 
 # ---------- Inicialização de estado ----------
 if "players" not in st.session_state:
@@ -129,309 +38,334 @@ if "player_positions" not in st.session_state:
     st.session_state.player_positions = {}
 if "current_player_index" not in st.session_state:
     st.session_state.current_player_index = 0
-if "game_log" not in st.session_state:
-    st.session_state.game_log = []
+if "diary" not in st.session_state:
+    st.session_state.diary = []
 if "player_relations" not in st.session_state:
     st.session_state.player_relations = {}
 if "action_noise" not in st.session_state:
     st.session_state.action_noise = {}
-if "zombie_positions" not in st.session_state:
-    st.session_state.zombie_positions = []
-if "map_image" not in st.session_state:
-    st.session_state.map_image = criar_mapa_base()
-if "city_pois" not in st.session_state:
-    st.session_state.city_pois = gerar_pois()
+if "world" not in st.session_state:
+    predios, ruas, pois = gerar_mundo()
+    st.session_state.world = (predios, ruas, pois)
+if "zombies" not in st.session_state:
+    st.session_state.zombies = gerar_zumbis()
+if "visited" not in st.session_state:
+    st.session_state.visited = set()
+if "day" not in st.session_state:
+    st.session_state.day = 1
 
-st.set_page_config(page_title="Cidade Silenciosa – Megacidade Sul-Norte", layout="wide")
-st.title("🏙️ Cidade Silenciosa – Exploração Urbana")
+st.set_page_config(page_title="Cidade Silenciosa – Hardcore Survival", layout="wide")
+st.title("🏙️ Cidade Silenciosa – 25.000 zumbis")
 
-# Sidebar: regenerar mapa
-with st.sidebar:
-    if st.button("🔄 Gerar novo mapa (reseta POIs)"):
-        st.session_state.map_image = criar_mapa_base()
-        st.session_state.city_pois = gerar_pois()
-        st.rerun()
-
-# ---------- Tela de criação do grupo ----------
+# ---------- Tela de criação de grupo ----------
 if len(st.session_state.players) == 0:
-    st.subheader("Monte seu grupo de sobreviventes")
-    col1, col2 = st.columns(2)
-    with col1:
-        new_name = st.text_input("Nome do novo personagem:", key="new_player_name")
-        if st.button("Adicionar ao grupo"):
-            if new_name:
-                idx = len(st.session_state.players)
-                st.session_state.players.append(Player(new_name))
-                # Posição inicial no sul (área segura)
-                st.session_state.player_positions[idx] = [0.1, 0.5]
-                for i in range(idx):
-                    st.session_state.player_relations.setdefault(i, {})[idx] = 'ally'
-                    st.session_state.player_relations.setdefault(idx, {})[i] = 'ally'
-                st.session_state.game_log.append(f"{new_name} surge nos arredores do sul.")
-                st.rerun()
-    with col2:
-        if len(st.session_state.players) > 0:
-            st.success(f"Grupo com {len(st.session_state.players)} personagem(ns).")
-            if st.button("Iniciar jornada"):
-                st.session_state.current_player_index = 0
-                st.rerun()
+    st.subheader("Forme seu grupo de sobreviventes")
+    nome = st.text_input("Nome do sobrevivente:", key="new")
+    if st.button("Adicionar ao grupo"):
+        if nome:
+            idx = len(st.session_state.players)
+            p = Player(nome)
+            st.session_state.players.append(p)
+            st.session_state.player_positions[idx] = (5.0, 0.5)  # sul
+            for i in range(idx):
+                st.session_state.player_relations.setdefault(i, {})[idx] = 'ally'
+                st.session_state.player_relations.setdefault(idx, {})[i] = 'ally'
+            diario(f"{nome} se junta ao grupo no sul da cidade.")
+            st.rerun()
+    if len(st.session_state.players) > 0:
+        if st.button("Iniciar jornada"):
+            st.session_state.current_player_index = 0
+            st.rerun()
 else:
     # ---------- Jogo em andamento ----------
-    total_players = len(st.session_state.players)
-    current_idx = st.session_state.current_player_index
-    current_player = st.session_state.players[current_idx]
-    current_pos = st.session_state.player_positions[current_idx]
+    total = len(st.session_state.players)
+    atual = st.session_state.current_player_index
+    jogador = st.session_state.players[atual]
+    x, y = st.session_state.player_positions[atual]
 
-    # Reduzir duração de ruídos ao passar a vez
+    # Atualizar visitado
+    update_visited(x, y)
+
+    # Sidebar
     with st.sidebar:
         st.subheader("👥 Grupo")
         for i, p in enumerate(st.session_state.players):
-            rel = get_relation(current_idx, i)
-            icon = "👉" if i == current_idx else ("🔵" if rel == 'ally' else "🔴")
-            st.write(f"{icon} {p.name} (HP: {p.hp}/{p.max_hp})")
+            rel = get_relation(atual, i)
+            icone = "👉" if i == atual else ("🔵" if rel == 'ally' else "🔴")
+            st.write(f"{icone} {p.name} (HP:{p.hp})")
         if st.button("Passar vez ➡️"):
-            to_remove = []
-            for idx in st.session_state.action_noise:
+            for idx in list(st.session_state.action_noise.keys()):
                 st.session_state.action_noise[idx]['turns_left'] -= 1
                 if st.session_state.action_noise[idx]['turns_left'] <= 0:
-                    to_remove.append(idx)
-            for idx in to_remove:
-                del st.session_state.action_noise[idx]
-            next_idx = (current_idx + 1) % total_players
-            st.session_state.current_player_index = next_idx
+                    del st.session_state.action_noise[idx]
+            st.session_state.current_player_index = (atual + 1) % total
             st.rerun()
         st.markdown("---")
         st.subheader("🤝 Relações")
         for i, p in enumerate(st.session_state.players):
-            if i != current_idx:
-                rel = get_relation(current_idx, i)
-                new_rel = st.radio(
-                    f"Relação com {p.name}",
-                    ['ally', 'enemy'],
-                    index=0 if rel=='ally' else 1,
-                    key=f"rel_{i}"
-                )
-                if new_rel != rel:
-                    st.session_state.player_relations.setdefault(current_idx, {})[i] = new_rel
-                    st.session_state.player_relations.setdefault(i, {})[current_idx] = new_rel
-                    st.session_state.game_log.append(
-                        f"{current_player.name} agora é {'aliado' if new_rel=='ally' else 'inimigo'} de {p.name}."
-                    )
+            if i != atual:
+                rel = get_relation(atual, i)
+                nova = st.radio(f"Com {p.name}", ['ally','enemy'], index=0 if rel=='ally' else 1, key=f"rel_{i}")
+                if nova != rel:
+                    st.session_state.player_relations.setdefault(atual, {})[i] = nova
+                    st.session_state.player_relations.setdefault(i, {})[atual] = nova
+                    diario(f"{jogador.name} agora é {'aliado' if nova=='ally' else 'inimigo'} de {p.name}.")
                     st.rerun()
 
-    # ---------- Painel do personagem ativo ----------
-    st.header(f"Vez de {current_player.name}")
+    # Painel do personagem
+    st.header(f"Dia {st.session_state.day} – Vez de {jogador.name}")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("❤️ Saúde", f"{current_player.hp}/{current_player.max_hp}")
-        st.metric("⚡ Estamina", f"{current_player.stamina}/{current_player.max_stamina}")
+        st.metric("❤️ HP", f"{jogador.hp}/{jogador.max_hp}")
+        st.metric("⚡ Stamina", f"{jogador.stamina}/{jogador.max_stamina}")
+        st.metric("🎒 Peso", f"{jogador.current_weight:.1f}/{jogador.max_weight} kg")
     with col2:
-        st.metric("🍖 Fome", f"{current_player.hunger}/100")
-        st.metric("💧 Sede", f"{current_player.thirst}/100")
+        st.metric("🍖 Fome", f"{jogador.hunger}/100")
+        st.metric("💧 Sede", f"{jogador.thirst}/100")
     with col3:
-        st.metric("🦠 Infecção", f"{current_player.infection}/100")
-        st.metric("🌡️ Temp", f"{current_player.temperature}/100")
+        st.metric("🦠 Infecção", f"{jogador.infection}/100")
+        st.metric("🌡️ Temp", f"{jogador.temperature}/100")
     with col4:
         st.write("**Habilidades**")
-        for skill, lvl in current_player.skills.items():
-            st.text(f"{skill}: {lvl}")
+        for sk, val in jogador.skills.items():
+            st.text(f"{sk}: {val}")
+        arma = jogador.equipped_weapon['nome'] if jogador.equipped_weapon else "Desarmado"
+        st.write(f"**Arma:** {arma}")
 
-    # ---------- Ações de sobrevivência ----------
-    st.subheader("Ações de Sobrevivência")
-    cA, cB, cC, cD = st.columns(4)
+    # Abas: Inventário / Diário
+    tab1, tab2 = st.tabs(["🎒 Inventário", "📜 Diário"])
+    with tab1:
+        if not jogador.inventory:
+            st.write("Vazio.")
+        else:
+            for item in jogador.inventory:
+                st.write(f"{item['nome']} x{item['quantidade']} ({item['tipo']}, {item['peso']}kg)")
+        st.write("---")
+        st.write("**Usar item:**")
+        itens_nomes = [item['nome'] for item in jogador.inventory]
+        if itens_nomes:
+            item_escolhido = st.selectbox("Item:", itens_nomes)
+            if st.button("Usar"):
+                for it in jogador.inventory:
+                    if it['nome'] == item_escolhido:
+                        tipo = it['tipo']
+                        if tipo == 'comida':
+                            jogador.eat(25, 'bom')
+                            diario(f"{jogador.name} comeu {item_escolhido}.")
+                        elif tipo == 'água':
+                            jogador.drink(40, 'limpa')
+                            diario(f"{jogador.name} bebeu {item_escolhido}.")
+                        elif tipo == 'medicamento':
+                            jogador.treat_infection(40)
+                            diario(f"{jogador.name} usou {item_escolhido}.")
+                        elif tipo in ('arma_branca', 'arma_fogo'):
+                            jogador.equipped_weapon = it
+                            diario(f"{jogador.name} equipou {item_escolhido}.")
+                        else:
+                            st.warning("Item não utilizável.")
+                            break
+                        jogador.remove_item(item_escolhido, 1)
+                        st.rerun()
+        else:
+            st.write("Nenhum item para usar.")
+
+    with tab2:
+        for msg in reversed(st.session_state.diary[-30:]):
+            st.write(msg)
+
+    # Ações principais
+    st.subheader("Ações")
+    cA, cB, cC = st.columns(3)
     with cA:
-        if st.button("⚔️ Atacar zumbi (10 ST)"):
-            cost = current_player.use_stamina(10, 'direct')
-            current_player.take_damage(8, reason="zumbi")
-            current_player.gain_skill_xp("armas_brancas")
-            make_noise(radius=0.008)
-            st.session_state.game_log.append(f"{current_player.name} ataca um zumbi! (custo {cost} ST)")
-            st.rerun()
-        if st.button("🛡️ Defender (8 ST)"):
-            cost = current_player.use_stamina(8, 'direct')
-            current_player.take_damage(3)
-            make_noise(radius=0.004)
-            st.session_state.game_log.append(f"{current_player.name} se defende. (custo {cost} ST)")
-            st.rerun()
+        if st.button("⚔️ Atacar (8 ST)"):
+            if jogador.stamina < 8:
+                st.warning("Sem estamina!")
+            else:
+                custo = jogador.use_stamina(8, 'direct')
+                dano = jogador.get_attack_damage()
+                zumbi_perto = False
+                for z in st.session_state.zombies:
+                    if distance(x, y, z['x'], z['y']) < 0.05:
+                        zumbi_perto = True
+                        break
+                if zumbi_perto:
+                    jogador.take_damage(5, reason="zumbi")
+                    diario(f"{jogador.name} ataca um zumbi causando {dano} de dano, mas sofre um arranhão.")
+                else:
+                    diario(f"{jogador.name} golpeia o ar. Nenhum zumbi por perto.")
+                st.rerun()
+        if st.button("🛡️ Defender (5 ST)"):
+            if jogador.stamina < 5:
+                st.warning("Sem estamina!")
+            else:
+                jogador.use_stamina(5, 'direct')
+                diario(f"{jogador.name} fica em posição defensiva.")
+                st.rerun()
     with cB:
-        if st.button("💤 Descansar (avança dia)"):
-            current_player.rest()
-            st.session_state.game_log.append(f"{current_player.name} descansa por um ciclo.")
+        if st.button("💤 Descansar"):
+            jogador.rest()
+            st.session_state.day += 1
+            diario(f"{jogador.name} descansa. Um novo dia amanhece.")
+            # Degradação de habilidades
             if random.randint(1,3) == 1:
-                current_player.degrade_skills()
+                jogador.degrade_skills()
             st.rerun()
     with cC:
-        if st.button("💊 Medicar (-30 infecção)"):
-            current_player.treat_infection(30)
-            current_player.gain_skill_xp("medicina")
-            st.session_state.game_log.append(f"{current_player.name} usa medicamentos.")
-            st.rerun()
-        if st.button("🍞 Comer ração"):
-            current_player.eat(25, "bom")
-            st.session_state.game_log.append(f"{current_player.name} come uma ração.")
-            st.rerun()
-    with cD:
-        if st.button("💧 Beber água limpa"):
-            current_player.drink(25, "limpa")
-            st.session_state.game_log.append(f"{current_player.name} bebe água limpa.")
-            st.rerun()
-        if st.button("🧥 Vestir casaco (+5 isolamento)"):
-            current_player.equip_clothing(5)
-            st.session_state.game_log.append(f"{current_player.name} veste um casaco.")
-            st.rerun()
-
-    # ---------- Exploração urbana (POIs) ----------
-    st.subheader("🔍 Explorar a Megacidade")
-    if 0.4 <= current_pos[1] <= 0.85:   # centro (cidade)
-        poi_proximo = None
-        dist_min = 0.005
-        for poi in st.session_state.city_pois:
-            if not poi['looted']:
-                d = distance(current_pos, poi['pos'])
-                if d < dist_min:
-                    dist_min = d
-                    poi_proximo = poi
-        if poi_proximo:
-            if poi_proximo['tipo'] == 'avancado':
-                st.warning("⚠️ Você está numa área extremamente perigosa (Zona Norte).")
-            st.write(f"Ponto de interesse a {dist_min*100:.0f}m.")
-            if st.button(f"🔎 Vasculhar (custa 5 ST)"):
-                desc = vasculhar_ponto(current_player, poi_proximo)
-                st.session_state.game_log.append(desc)
-                poi_proximo['looted'] = True
-                st.rerun()
-        else:
-            st.write("Nenhum ponto inexplorado por perto. Continue explorando.")
-    else:
-        st.write("Você está fora da área urbana. Aqui não há edifícios para vasculhar.")
-
-    # ---------- Controle de zumbis ----------
-    st.subheader("🧟 População de Zumbis")
-    zombie_density = st.slider("Densidade", 10, 100, 30, 5)
-    if st.button("🔄 Atualizar patrulhas"):
-        st.session_state.zombie_positions = gerar_zumbis(zombie_density)
-        st.rerun()
-    if not st.session_state.zombie_positions:
-        st.session_state.zombie_positions = gerar_zumbis(zombie_density)
-
-    # ---------- Mapa tático ----------
-    st.markdown("---")
-    st.subheader("🗺️ Mapa Tático")
-    img = st.session_state.map_image
-    buffered = BytesIO()
-    img.save(buffered, format="PNG")
-    img_base64 = base64.b64encode(buffered.getvalue()).decode()
-
-    m = folium.Map(location=[0.5, 0.5], zoom_start=12, crs='Simple')
-    folium.raster_layers.ImageOverlay(
-        image="data:image/png;base64," + img_base64,
-        bounds=[[0,0],[1,1]],
-        opacity=1,
-    ).add_to(m)
-
-    # Zonas de risco (polígonos)
-    # Sul (baixo risco) - verde
-    sul = [[0,0.4], [1,0.4], [1,1], [0,1]]
-    folium.GeoJson(
-        {"type":"Polygon","coordinates":[sul]},
-        style_function=lambda x: {"fillColor":"green","color":"green","fillOpacity":0.1}
-    ).add_to(m)
-    # Centro (médio) - laranja
-    centro = [[0,0.85], [1,0.85], [1,0.4], [0,0.4]]
-    folium.GeoJson(
-        {"type":"Polygon","coordinates":[centro]},
-        style_function=lambda x: {"fillColor":"orange","color":"orange","fillOpacity":0.1}
-    ).add_to(m)
-    # Norte (alto) - vermelho escuro
-    norte = [[0,0], [1,0], [1,0.85], [0,0.85]]
-    folium.GeoJson(
-        {"type":"Polygon","coordinates":[norte]},
-        style_function=lambda x: {"fillColor":"darkred","color":"red","fillOpacity":0.2, "weight":2}
-    ).add_to(m)
-    # Zona de quarentena (roxo) - dentro do norte
-    quarentena = [[0.2,0], [0.2,0.85], [0.8,0.85], [0.8,0]]
-    folium.GeoJson(
-        {"type":"Polygon","coordinates":[quarentena]},
-        style_function=lambda x: {"fillColor":"purple","color":"purple","fillOpacity":0.15}
-    ).add_to(m)
-
-    # Zumbis (círculos pretos)
-    for z in st.session_state.zombie_positions:
-        folium.CircleMarker(
-            location=z,
-            radius=2,
-            color='black',
-            fill=True,
-            fill_opacity=0.6
-        ).add_to(m)
-
-    # POIs (apenas não looted e próximos)
-    raio_visao_pois = 0.03
-    for poi in st.session_state.city_pois:
-        if not poi['looted'] and distance(current_pos, poi['pos']) < raio_visao_pois:
-            cor = 'lightblue' if poi['tipo'] == 'normal' else 'yellow'
-            folium.CircleMarker(
-                location=poi['pos'],
-                radius=1.5,
-                color=cor,
-                fill=True,
-                fill_opacity=0.9,
-                popup=f"Chance: {poi['chance']*100:.0f}%"
-            ).add_to(m)
-
-    # Jogadores (visibilidade condicional)
-    for i, p in enumerate(st.session_state.players):
-        pos = st.session_state.player_positions[i]
-        if i == current_idx:
-            cor = 'green'
-        else:
-            rel = get_relation(current_idx, i)
-            if rel == 'ally':
-                cor = 'blue'
+        if st.button("🔍 Vasculhar área (5 ST)"):
+            if jogador.stamina < 5:
+                st.warning("Sem estamina!")
             else:
-                dist = distance(current_pos, pos)
-                if dist < 0.005 or (i in st.session_state.action_noise and dist <= st.session_state.action_noise[i]['radius']):
-                    cor = 'red'
-                else:
-                    continue
-        folium.Marker(
-            location=pos,
-            popup=f"{p.name} (HP:{p.hp})",
-            icon=folium.Icon(color=cor)
-        ).add_to(m)
-
-    st_folium(m, width=800, height=800)
+                jogador.use_stamina(5, 'other')
+                pois = st.session_state.world[2]
+                for poi in pois:
+                    if not poi['looted'] and distance(x, y, poi['x'], poi['y']) < 0.03:
+                        tabela = get_loot_table(poi['tipo'], poi['tier'])
+                        # Sorteia um item
+                        total_chance = sum(p for _, p in tabela)
+                        if total_chance == 0:
+                            diario(f"{jogador.name} vasculha um(a) {poi['tipo']}, mas está vazio.")
+                        else:
+                            r = random.random() * total_chance
+                            acum = 0
+                            for item, prob in tabela:
+                                acum += prob
+                                if r <= acum:
+                                    # Adiciona ao inventário
+                                    peso = 0.5
+                                    if 'arma' in item.lower():
+                                        peso = 2.0
+                                    elif 'munição' in item.lower():
+                                        peso = 0.1
+                                    elif 'garrafa' in item.lower() or 'lata' in item.lower():
+                                        peso = 0.3
+                                    if jogador.add_item(item, 'diverso', 1, peso):
+                                        diario(f"{jogador.name} encontra {item} em um(a) {poi['tipo']}.")
+                                    else:
+                                        diario(f"{jogador.name} encontra {item}, mas está sobrecarregado e não pode carregar.")
+                                    break
+                            else:
+                                diario(f"{jogador.name} vasculha, mas não acha nada útil.")
+                        poi['looted'] = True
+                        st.rerun()
+                diario(f"{jogador.name} não há nada para vasculhar nas proximidades.")
+                st.rerun()
 
     # Movimentação
-    st.subheader(f"Mover {current_player.name}")
-    cols_move = st.columns(4)
-    step = 0.02
-    with cols_move[0]:
-        if st.button("⬆️ Norte"):
-            new_lat = current_pos[0] + step
-            st.session_state.player_positions[current_idx][0] = min(1.0, new_lat)
+    st.subheader(f"Mover {jogador.name} (custa 2 ST)")
+    cols_m = st.columns(4)
+    passo = 0.1
+    sem_st = jogador.stamina < 2
+    with cols_m[0]:
+        if st.button("⬆️ Norte", disabled=sem_st):
+            jogador.use_stamina(2, 'other')
+            st.session_state.player_positions[atual] = (x, min(9.9, y + passo))
             st.rerun()
-    with cols_move[1]:
-        if st.button("⬇️ Sul"):
-            new_lat = current_pos[0] - step
-            st.session_state.player_positions[current_idx][0] = max(0.0, new_lat)
+    with cols_m[1]:
+        if st.button("⬇️ Sul", disabled=sem_st):
+            jogador.use_stamina(2, 'other')
+            st.session_state.player_positions[atual] = (x, max(0.1, y - passo))
             st.rerun()
-    with cols_move[2]:
-        if st.button("➡️ Leste"):
-            new_lon = current_pos[1] + step
-            st.session_state.player_positions[current_idx][1] = min(1.0, new_lon)
+    with cols_m[2]:
+        if st.button("➡️ Leste", disabled=sem_st):
+            jogador.use_stamina(2, 'other')
+            st.session_state.player_positions[atual] = (min(9.9, x + passo), y)
             st.rerun()
-    with cols_move[3]:
-        if st.button("⬅️ Oeste"):
-            new_lon = current_pos[1] - step
-            st.session_state.player_positions[current_idx][1] = max(0.0, new_lon)
+    with cols_m[3]:
+        if st.button("⬅️ Oeste", disabled=sem_st):
+            jogador.use_stamina(2, 'other')
+            st.session_state.player_positions[atual] = (max(0.1, x - passo), y)
             st.rerun()
 
-    # Log de eventos
+    # ---------- MAPA 3D ----------
     st.markdown("---")
-    st.subheader("📜 Registro")
-    for msg in reversed(st.session_state.game_log[-10:]):
-        st.write(f"- {msg}")
+    predios, ruas, _ = st.session_state.world
+
+    # Prédios visíveis (apenas visitados ou próximos)
+    predios_vis = []
+    for b in predios:
+        if is_visible(b['x'], b['y']) or distance(x, y, b['x'], b['y']) < 0.3:
+            cor = [150, 150, 150]
+            if b['tipo'] == 'policial':
+                cor = [50, 50, 200]
+            elif b['tipo'] == 'medico':
+                cor = [200, 50, 50]
+            predios_vis.append({**b, 'cor': cor})
+    layer_predios = pdk.Layer(
+        "ColumnLayer",
+        data=predios_vis,
+        get_position="[x, y]",
+        get_elevation="altura",
+        elevation_scale=20,
+        radius=0.05,
+        get_fill_color="cor",
+        pickable=True
+    )
+
+    # Ruas
+    linhas = []
+    for r in ruas:
+        linhas.append({'start': [r['x1'], r['y1']], 'end': [r['x2'], r['y2']]})
+    layer_ruas = pdk.Layer(
+        "LineLayer",
+        data=linhas,
+        get_source_position="start",
+        get_target_position="end",
+        get_color="[200, 200, 200, 150]",
+        get_width=2
+    )
+
+    # Zumbis próximos (raio de 0.3 km)
+    zumbis_vis = [z for z in st.session_state.zombies if distance(x, y, z['x'], z['y']) < 0.3]
+    layer_zumbis = pdk.Layer(
+        "ScatterplotLayer",
+        data=zumbis_vis,
+        get_position="[x, y]",
+        get_radius=0.015,
+        radius_scale=30,
+        get_fill_color="[0, 0, 0, 200]"
+    )
+
+    # Jogador atual
+    layer_jogador = pdk.Layer(
+        "ScatterplotLayer",
+        data=[{'x': x, 'y': y, 'cor': [0,255,0]}],
+        get_position="[x, y]",
+        get_radius=0.05,
+        radius_scale=30,
+        get_fill_color="cor"
+    )
+
+    # Outros jogadores (aliados azuis, inimigos vermelhos)
+    outros = []
+    for i, p in enumerate(st.session_state.players):
+        if i != atual:
+            px, py = st.session_state.player_positions[i]
+            rel = get_relation(atual, i)
+            cor = [0,0,255] if rel == 'ally' else [255,0,0]
+            outros.append({'x': px, 'y': py, 'cor': cor, 'nome': p.name})
+    layer_outros = pdk.Layer(
+        "ScatterplotLayer",
+        data=outros,
+        get_position="[x, y]",
+        get_radius=0.05,
+        radius_scale=30,
+        get_fill_color="cor"
+    )
+
+    view_state = pdk.ViewState(
+        longitude=x,
+        latitude=y,
+        zoom=13,
+        pitch=50,
+        bearing=0
+    )
+
+    deck = pdk.Deck(
+        layers=[layer_predios, layer_ruas, layer_zumbis, layer_jogador, layer_outros],
+        initial_view_state=view_state,
+        map_style=None
+    )
+    st.pydeck_chart(deck)
 
     # Verificar mortes
     for i, p in enumerate(st.session_state.players):
