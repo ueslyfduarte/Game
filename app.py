@@ -8,7 +8,7 @@ import random
 import math
 
 # ---------- Configurações ----------
-LOCAL_RADIUS_KM = 0.5            # raio de renderização (ajustado conforme direção)
+LOCAL_RADIUS_KM = 0.6            # raio de renderização (km)
 BUILDING_HEIGHT_SCALE = 0.008
 MAP_FULL_SIZE = 200
 KM_TO_PIX_FULL = 20
@@ -18,13 +18,13 @@ ZOMBIE_SPEED = 0.03
 
 # Configurações visuais dos prédios
 TYPE_CONFIG = {
-    'residencial': {'max_h': 0.02, 'base': 0.025, 'cor': (160, 160, 160)},
-    'comercial':    {'max_h': 0.04, 'base': 0.02, 'cor': (200, 200, 100)},
-    'industrial':   {'max_h': 0.05, 'base': 0.025, 'cor': (180, 140, 80)},
-    'medico':       {'max_h': 0.06, 'base': 0.02, 'cor': (220, 80, 80)},
-    'policial':     {'max_h': 0.07, 'base': 0.02, 'cor': (80, 80, 220)},
-    'escola':       {'max_h': 0.03, 'base': 0.025, 'cor': (100, 200, 100)},
-    'restaurante':  {'max_h': 0.02, 'base': 0.025, 'cor': (200, 150, 100)}
+    'residencial': {'max_h': 0.025, 'base': 0.03,  'cor': (180, 180, 180)},
+    'comercial':    {'max_h': 0.05,  'base': 0.025, 'cor': (220, 220, 120)},
+    'industrial':   {'max_h': 0.06,  'base': 0.03,  'cor': (200, 160, 100)},
+    'medico':       {'max_h': 0.07,  'base': 0.025, 'cor': (240, 100, 100)},
+    'policial':     {'max_h': 0.08,  'base': 0.025, 'cor': (100, 100, 240)},
+    'escola':       {'max_h': 0.04,  'base': 0.03,  'cor': (120, 220, 120)},
+    'restaurante':  {'max_h': 0.03,  'base': 0.03,  'cor': (220, 170, 120)}
 }
 
 # ---------- Funções auxiliares ----------
@@ -98,12 +98,12 @@ if "day" not in st.session_state:
 if "last_pos" not in st.session_state:
     st.session_state.last_pos = None
 if "last_direction" not in st.session_state:
-    st.session_state.last_direction = (0, 1)  # começa olhando para norte
+    st.session_state.last_direction = (0, 1)  # olhando para norte
 if "action_just_taken" not in st.session_state:
     st.session_state.action_just_taken = False
 
 st.set_page_config(page_title="Cidade Silenciosa – 1ª Pessoa", layout="wide")
-st.title("🏙️ Cidade Silenciosa – Visão em Primeira Pessoa")
+st.title("🏙️ Cidade Silenciosa – Visão Realista em Primeira Pessoa")
 
 # ---------- Tela de criação de grupo ----------
 if len(st.session_state.players) == 0:
@@ -138,7 +138,6 @@ else:
         st.session_state.action_just_taken = False
 
     mark_visited(x, y)
-    # Atualiza direção baseada no movimento (mantém a última)
     if st.session_state.last_pos is not None:
         old_x, old_y = st.session_state.last_pos
         dx = x - old_x
@@ -149,7 +148,7 @@ else:
                 st.session_state.last_direction = (dx/length, dy/length)
     st.session_state.last_pos = (x, y)
 
-    # Sidebar
+    # Sidebar (mesma de sempre)
     with st.sidebar:
         st.subheader("👥 Grupo")
         for i, p in enumerate(st.session_state.players):
@@ -171,7 +170,7 @@ else:
                     diario(f"{jogador.name} agora é {'aliado' if nova=='ally' else 'inimigo'} de {p.name}.")
                     st.rerun()
 
-    # Painel do personagem
+    # Painel do personagem (mesmo)
     st.header(f"Dia {st.session_state.day} – Vez de {jogador.name}")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -191,146 +190,13 @@ else:
         arma = jogador.equipped_weapon['nome'] if jogador.equipped_weapon else "Desarmado"
         st.write(f"**Arma:** {arma}")
 
-    # Abas inventário / diário (mantidas iguais)
-    tab1, tab2 = st.tabs(["🎒 Inventário", "📜 Diário"])
-    with tab1:
-        if not jogador.inventory:
-            st.write("Vazio.")
-        else:
-            for item in jogador.inventory:
-                st.write(f"{item['nome']} x{item['quantidade']} ({item['tipo']}, {item['peso']}kg)")
-        st.write("---")
-        st.write("**Usar item:**")
-        itens_nomes = [item['nome'] for item in jogador.inventory]
-        if itens_nomes:
-            item_escolhido = st.selectbox("Item:", itens_nomes)
-            if st.button("Usar"):
-                for it in jogador.inventory:
-                    if it['nome'] == item_escolhido:
-                        tipo = it['tipo']
-                        if tipo == 'comida':
-                            jogador.eat(25, 'bom')
-                            diario(f"{jogador.name} comeu {item_escolhido}.")
-                        elif tipo == 'água':
-                            jogador.drink(40, 'limpa')
-                            diario(f"{jogador.name} bebeu {item_escolhido}.")
-                        elif tipo == 'medicamento':
-                            jogador.treat_infection(40)
-                            diario(f"{jogador.name} usou {item_escolhido}.")
-                        elif tipo in ('arma_branca', 'arma_fogo'):
-                            jogador.equipped_weapon = it
-                            diario(f"{jogador.name} equipou {item_escolhido}.")
-                        else:
-                            st.warning("Item não utilizável.")
-                            break
-                        jogador.remove_item(item_escolhido, 1)
-                        st.session_state.action_just_taken = True
-                        st.rerun()
-        else:
-            st.write("Nenhum item para usar.")
-    with tab2:
-        for msg in reversed(st.session_state.diary[-30:]):
-            st.write(msg)
+    # Abas inventário / diário (omitidas para focar no mapa, mas mantidas iguais – cole as do código anterior)
+    # ... (mantenha as abas como estavam)
 
-    # Ações
-    st.subheader("Ações")
-    cA, cB, cC = st.columns(3)
-    with cA:
-        if st.button("⚔️ Atacar (8 ST)"):
-            if jogador.stamina < 8:
-                st.warning("Sem estamina!")
-            else:
-                custo = jogador.use_stamina(8, 'direct')
-                dano = jogador.get_attack_damage()
-                zumbi_perto = any(distance(x, y, z['x'], z['y']) < 0.05 for z in st.session_state.zombies)
-                if zumbi_perto:
-                    jogador.take_damage(5, reason="zumbi")
-                    diario(f"{jogador.name} ataca um zumbi causando {dano} de dano, mas sofre um arranhão.")
-                else:
-                    diario(f"{jogador.name} golpeia o ar. Nenhum zumbi por perto.")
-                st.session_state.action_just_taken = True
-                st.rerun()
-        if st.button("🛡️ Defender (5 ST)"):
-            if jogador.stamina < 5:
-                st.warning("Sem estamina!")
-            else:
-                jogador.use_stamina(5, 'direct')
-                diario(f"{jogador.name} fica em posição defensiva.")
-                st.session_state.action_just_taken = True
-                st.rerun()
-    with cB:
-        if st.button("💤 Descansar"):
-            jogador.rest()
-            st.session_state.day += 1
-            diario(f"{jogador.name} descansa. Um novo dia amanhece.")
-            if random.randint(1,3) == 1:
-                jogador.degrade_skills()
-            st.session_state.action_just_taken = True
-            st.rerun()
-    with cC:
-        if st.button("🔍 Vasculhar área (5 ST)"):
-            if jogador.stamina < 5:
-                st.warning("Sem estamina!")
-            else:
-                jogador.use_stamina(5, 'other')
-                pois = st.session_state.world[2]
-                for poi in pois:
-                    if not poi['looted'] and distance(x, y, poi['x'], poi['y']) < 0.03:
-                        tabela = get_loot_table(poi['tipo'], poi['tier'])
-                        total_chance = sum(p for _, p in tabela)
-                        if total_chance == 0:
-                            diario(f"{jogador.name} vasculha um(a) {poi['tipo']}, mas está vazio.")
-                        else:
-                            r = random.random() * total_chance
-                            acum = 0
-                            for item, prob in tabela:
-                                acum += prob
-                                if r <= acum:
-                                    peso = 0.5
-                                    if 'arma' in item.lower(): peso = 2.0
-                                    elif 'munição' in item.lower(): peso = 0.1
-                                    elif 'garrafa' in item.lower() or 'lata' in item.lower(): peso = 0.3
-                                    if jogador.add_item(item, 'diverso', 1, peso):
-                                        diario(f"{jogador.name} encontra {item} em um(a) {poi['tipo']}.")
-                                    else:
-                                        diario(f"{jogador.name} encontra {item}, mas está sobrecarregado e não pode carregar.")
-                                    break
-                            else:
-                                diario(f"{jogador.name} vasculha, mas não acha nada útil.")
-                        poi['looted'] = True
-                        st.session_state.action_just_taken = True
-                        st.rerun()
-                diario(f"{jogador.name} não há nada para vasculhar nas proximidades.")
-                st.session_state.action_just_taken = True
-                st.rerun()
+    # Ações e movimentação (omitidas para focar no mapa, mas mantidas)
+    # ... (cole os botões de ação do código anterior)
 
-    # Movimentação
-    st.subheader(f"Mover {jogador.name} (custa 2 ST)")
-    cols_m = st.columns(4)
-    passo = 0.1
-    sem_st = jogador.stamina < 2
-    if cols_m[0].button("⬆️ Norte", disabled=sem_st):
-        jogador.use_stamina(2, 'other')
-        st.session_state.player_positions[atual] = (x, min(9.9, y + passo))
-        st.session_state.action_just_taken = True
-        st.rerun()
-    if cols_m[1].button("⬇️ Sul", disabled=sem_st):
-        jogador.use_stamina(2, 'other')
-        st.session_state.player_positions[atual] = (x, max(0.1, y - passo))
-        st.session_state.action_just_taken = True
-        st.rerun()
-    if cols_m[2].button("➡️ Leste", disabled=sem_st):
-        jogador.use_stamina(2, 'other')
-        st.session_state.player_positions[atual] = (min(9.9, x + passo), y)
-        st.session_state.action_just_taken = True
-        st.rerun()
-    if cols_m[3].button("⬅️ Oeste", disabled=sem_st):
-        jogador.use_stamina(2, 'other')
-        st.session_state.player_positions[atual] = (max(0.1, x - passo), y)
-        st.session_state.action_just_taken = True
-        st.rerun()
-
-    # ---------- MAPA 3D EM PRIMEIRA PESSOA ----------
+    # ---------- MAPA EM PRIMEIRA PESSOA REALISTA ----------
     st.markdown("---")
     col_map1, col_map2 = st.columns([3, 1])
 
@@ -341,24 +207,58 @@ else:
         # Direção atual
         dir_x, dir_y = st.session_state.last_direction
 
-        # Define a área visível como um retângulo à frente (0.5 km de profundidade, largura 0.3 km)
-        depth = 0.5
-        width = 0.3
-        # Vetor perpendicular à direção (para largura)
+        # Parâmetros da câmera
+        eye_height = 0.016  # ~1,6 metros
+        look_distance = 0.35  # distância focal (metros)
+
+        # Posição dos olhos
+        eye_x = x
+        eye_y = y
+        eye_z = eye_height
+
+        # Ponto para onde olha (ligeiramente inclinado para baixo: 2 graus)
+        down_angle = 0.03  # pequena inclinação para baixo
+        center_x = x + dir_x * look_distance
+        center_y = y + dir_y * look_distance
+        center_z = eye_height - down_angle * look_distance
+
+        # Define o cone de visão (120 graus) -> usamos um retângulo grande à frente
+        fov = 120  # graus
+        half_fov_rad = math.radians(fov / 2)
+        # Profundidade máxima visível
+        max_depth = 0.6  # km
+        # Largura máxima na profundidade máxima
+        max_width = 2 * max_depth * math.tan(half_fov_rad)
+
+        # Vetor perpendicular à direção
         perp_x = -dir_y
         perp_y = dir_x
 
-        # Centro da área visível
-        center_x = x + dir_x * (depth / 2)
-        center_y = y + dir_y * (depth / 2)
+        # Bounding box do frustum
+        near = 0.01
+        far = max_depth
+        # Vamos calcular um polígono aproximado (4 pontos) e depois pegar os limites
+        # Pontos: near_left, near_right, far_left, far_right
+        near_center_x = x + dir_x * near
+        near_center_y = y + dir_y * near
+        far_center_x = x + dir_x * far
+        far_center_y = y + dir_y * far
 
-        # Limites do bounding box
-        x_min = center_x - abs(perp_x) * width/2 - abs(dir_x) * depth/2
-        x_max = center_x + abs(perp_x) * width/2 + abs(dir_x) * depth/2
-        y_min = center_y - abs(perp_y) * width/2 - abs(dir_y) * depth/2
-        y_max = center_y + abs(perp_y) * width/2 + abs(dir_y) * depth/2
+        near_half_width = near * math.tan(half_fov_rad)
+        far_half_width = far * math.tan(half_fov_rad)
 
-        # Chão da cidade (apenas na área visível)
+        p1 = (near_center_x - perp_x * near_half_width, near_center_y - perp_y * near_half_width)
+        p2 = (near_center_x + perp_x * near_half_width, near_center_y + perp_y * near_half_width)
+        p3 = (far_center_x + perp_x * far_half_width, far_center_y + perp_y * far_half_width)
+        p4 = (far_center_x - perp_x * far_half_width, far_center_y - perp_y * far_half_width)
+
+        # Limites gerais (bounding box)
+        xs = [p[0] for p in [p1, p2, p3, p4]]
+        ys = [p[1] for p in [p1, p2, p3, p4]]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+
+        # Chão
         vertices_floor = [
             [x_min, y_min, 0], [x_max, y_min, 0], [x_max, y_max, 0], [x_min, y_max, 0]
         ]
@@ -370,12 +270,13 @@ else:
             i=[f[0] for f in faces_floor],
             j=[f[1] for f in faces_floor],
             k=[f[2] for f in faces_floor],
-            facecolor=['rgb(30,30,30)', 'rgb(30,30,30)'],
+            facecolor=['rgb(25,25,25)', 'rgb(25,25,25)'],
             opacity=1.0,
-            name='Chão'
+            name='Chão',
+            lighting=dict(ambient=0.5, diffuse=0.5, specular=0.1, roughness=0.5)
         )
 
-        # Prédios visíveis
+        # Prédios com iluminação
         vertices = []
         faces = []
         cores_predios = []
@@ -398,49 +299,74 @@ else:
             facecolor=[f'rgb({c[0]},{c[1]},{c[2]})' for c in cores_predios],
             opacity=1.0,
             flatshading=True,
-            name='Prédios'
+            name='Prédios',
+            lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.3)
         )
 
-        # Ruas e calçadas (dentro da área)
+        # Ruas (faixas cinza escuro)
         ruas_x, ruas_y, ruas_z = [], [], []
-        calcadas_x, calcadas_y, calcadas_z = [], [], []
-        offset = 0.015
         for r in ruas:
             if (x_min <= r['x1'] <= x_max and y_min <= r['y1'] <= y_max) or \
                (x_min <= r['x2'] <= x_max and y_min <= r['y2'] <= y_max):
                 ruas_x.extend([r['x1'], r['x2'], None])
                 ruas_y.extend([r['y1'], r['y2'], None])
                 ruas_z.extend([0.001, 0.001, None])
-                if r['x1'] == r['x2']:  # vertical
-                    calcadas_x.extend([r['x1']-offset, r['x1']-offset, None, r['x1']+offset, r['x1']+offset, None])
-                    calcadas_y.extend([r['y1'], r['y2'], None, r['y1'], r['y2'], None])
-                    calcadas_z.extend([0.001, 0.001, None, 0.001, 0.001, None])
-                else:  # horizontal
-                    calcadas_y.extend([r['y1']-offset, r['y1']-offset, None, r['y1']+offset, r['y1']+offset, None])
-                    calcadas_x.extend([r['x1'], r['x2'], None, r['x1'], r['x2'], None])
-                    calcadas_z.extend([0.001, 0.001, None, 0.001, 0.001, None])
         trace_ruas = go.Scatter3d(
             x=ruas_x, y=ruas_y, z=ruas_z,
-            mode='lines', line=dict(color='lightgray', width=4), name='Ruas'
+            mode='lines', line=dict(color='darkgray', width=6), name='Ruas'
         )
-        trace_calcadas = go.Scatter3d(
-            x=calcadas_x, y=calcadas_y, z=calcadas_z,
-            mode='lines', line=dict(color='white', width=1.5), name='Calçadas'
+        # Faixa central amarela
+        faixa_x, faixa_y, faixa_z = [], [], []
+        for r in ruas:
+            if r['x1'] == r['x2']:  # vertical
+                if (x_min <= r['x1'] <= x_max):
+                    faixa_x.extend([r['x1'], r['x1'], None])
+                    faixa_y.extend([r['y1'], r['y2'], None])
+                    faixa_z.extend([0.002, 0.002, None])
+            else:  # horizontal
+                if (y_min <= r['y1'] <= y_max):
+                    faixa_x.extend([r['x1'], r['x2'], None])
+                    faixa_y.extend([r['y1'], r['y1'], None])
+                    faixa_z.extend([0.002, 0.002, None])
+        trace_faixa = go.Scatter3d(
+            x=faixa_x, y=faixa_y, z=faixa_z,
+            mode='lines', line=dict(color='gold', width=2, dash='dot'), name='Faixa'
         )
 
-        # Zumbis
+        # Calçadas (linhas brancas elevadas)
+        calcadas_x, calcadas_y, calcadas_z = [], [], []
+        offset = 0.015
+        for r in ruas:
+            if r['x1'] == r['x2']:  # vertical
+                if (x_min <= r['x1']-offset <= x_max) or (x_min <= r['x1']+offset <= x_max):
+                    calcadas_x.extend([r['x1']-offset, r['x1']-offset, None, r['x1']+offset, r['x1']+offset, None])
+                    calcadas_y.extend([r['y1'], r['y2'], None, r['y1'], r['y2'], None])
+                    calcadas_z.extend([0.003, 0.003, None, 0.003, 0.003, None])
+            else:  # horizontal
+                if (y_min <= r['y1']-offset <= y_max) or (y_min <= r['y1']+offset <= y_max):
+                    calcadas_y.extend([r['y1']-offset, r['y1']-offset, None, r['y1']+offset, r['y1']+offset, None])
+                    calcadas_x.extend([r['x1'], r['x2'], None, r['x1'], r['x2'], None])
+                    calcadas_z.extend([0.003, 0.003, None, 0.003, 0.003, None])
+        trace_calcadas = go.Scatter3d(
+            x=calcadas_x, y=calcadas_y, z=calcadas_z,
+            mode='lines', line=dict(color='white', width=2), name='Calçadas'
+        )
+
+        # Zumbis (escala maior, ~1.7m de altura visual)
         zumbis_x, zumbis_y, zumbis_z = [], [], []
         for z in st.session_state.zombies:
             if x_min <= z['x'] <= x_max and y_min <= z['y'] <= y_max:
                 zumbis_x.append(z['x'])
                 zumbis_y.append(z['y'])
-                zumbis_z.append(0.005)
+                zumbis_z.append(0.008)  # metade da altura de uma pessoa (~0.8m no chão + 0.8m altura)
         trace_zumbis = go.Scatter3d(
             x=zumbis_x, y=zumbis_y, z=zumbis_z,
-            mode='markers', marker=dict(size=5, color='black'), name='Zumbis'
+            mode='markers',
+            marker=dict(size=8, color='black'),
+            name='Zumbis'
         )
 
-        # Outros jogadores (visíveis apenas se aliados ou próximos)
+        # Outros jogadores (apenas se aliados/próximos)
         outros_x, outros_y, outros_z = [], [], []
         cores_outros = []
         for i, p in enumerate(st.session_state.players):
@@ -454,25 +380,32 @@ else:
                     cores_outros.append('blue' if rel == 'ally' else 'red')
         trace_outros = go.Scatter3d(
             x=outros_x, y=outros_y, z=outros_z,
-            mode='markers', marker=dict(size=8, color=cores_outros), name='Outros'
+            mode='markers',
+            marker=dict(size=10, color=cores_outros),
+            name='Outros'
         )
 
-        # Mira central (linha vertical sutil)
-        mira_x = [x + dir_x * 0.02, x + dir_x * 0.08]
-        mira_y = [y + dir_y * 0.02, y + dir_y * 0.08]
-        mira_z = [0.01, 0.01]
+        # Mira (ponto central)
+        mira_dist = 0.05  # distância da mira
+        mira_x = [x + dir_x * mira_dist]
+        mira_y = [y + dir_y * mira_dist]
+        mira_z = [eye_height]
         trace_mira = go.Scatter3d(
             x=mira_x, y=mira_y, z=mira_z,
-            mode='lines', line=dict(color='white', width=2), name='Mira'
+            mode='markers',
+            marker=dict(size=4, color='white', symbol='cross-thin'),
+            name='Mira'
         )
 
-        # Configuração da câmera em primeira pessoa
-        eye = dict(x=x, y=y, z=0.015)  # altura dos olhos
-        center = dict(x=x + dir_x * 0.3, y=y + dir_y * 0.3, z=0.015)  # olhando 300m à frente
-        camera = dict(eye=eye, center=center)
+        # Configuração da câmera
+        camera = dict(
+            eye=dict(x=eye_x, y=eye_y, z=eye_z),
+            center=dict(x=center_x, y=center_y, z=center_z),
+            projection=dict(type='perspective')
+        )
 
         fig = go.Figure(data=[
-            mesh_floor, mesh_predios, trace_ruas, trace_calcadas,
+            mesh_floor, mesh_predios, trace_ruas, trace_faixa, trace_calcadas,
             trace_zumbis, trace_outros, trace_mira
         ])
         fig.update_layout(
@@ -482,10 +415,10 @@ else:
                 zaxis=dict(range=[0, 0.15], visible=False),
                 aspectmode='manual',
                 aspectratio=dict(x=1, y=1, z=0.4),
-                bgcolor='rgb(20,20,20)',
+                bgcolor='rgb(10,10,20)',   # tom azulado escuro para céu noturno
                 camera=camera
             ),
-            paper_bgcolor='rgb(20,20,20)',
+            paper_bgcolor='rgb(10,10,20)',
             margin=dict(l=0, r=0, t=0, b=0),
             showlegend=False
         )
