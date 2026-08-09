@@ -1,9 +1,15 @@
 import streamlit as st
 from player import Player
 from mapa_gerador import gerar_mundo, gerar_zumbis, get_loot_table
-import pydeck as pdk
+from PIL import Image, ImageDraw
 import random
 import math
+from io import BytesIO
+
+# ---------- Configurações da imagem do mapa ----------
+MAP_SIZE = 1000          # pixels (quadrado)
+KM = 100                 # pixels por km (10 km = 1000 px)
+BUILDING_RADIUS = 3      # tamanho dos prédios na imagem
 
 # ---------- Funções auxiliares ----------
 def distance(x1, y1, x2, y2):
@@ -13,23 +19,14 @@ def get_relation(player_idx, other_idx):
     if player_idx == other_idx: return 'self'
     return st.session_state.player_relations.get(player_idx, {}).get(other_idx, 'ally')
 
-def make_noise(radius, turns=1):
-    st.session_state.action_noise[st.session_state.current_player_index] = {
-        'radius': radius, 'turns_left': turns
-    }
-
-def update_visited(x, y):
-    cx = int(x * 10)
-    cy = int(y * 10)
-    st.session_state.visited.add((cx, cy))
-
-def is_visible(x, y):
-    cx = int(x * 10)
-    cy = int(y * 10)
-    return (cx, cy) in st.session_state.visited
-
 def diario(entrada):
     st.session_state.diary.append(f"Dia {st.session_state.day}: {entrada}")
+
+def world_to_pixel(x, y):
+    """Converte coordenadas do mundo (0-10) para pixels (0-MAP_SIZE)."""
+    px = int(x * KM)
+    py = int(y * KM)
+    return px, py
 
 # ---------- Inicialização de estado ----------
 if "players" not in st.session_state:
@@ -42,8 +39,6 @@ if "diary" not in st.session_state:
     st.session_state.diary = []
 if "player_relations" not in st.session_state:
     st.session_state.player_relations = {}
-if "action_noise" not in st.session_state:
-    st.session_state.action_noise = {}
 if "world" not in st.session_state:
     predios, ruas, pois = gerar_mundo()
     st.session_state.world = (predios, ruas, pois)
@@ -54,8 +49,8 @@ if "visited" not in st.session_state:
 if "day" not in st.session_state:
     st.session_state.day = 1
 
-st.set_page_config(page_title="Cidade Silenciosa – 2.5D", layout="wide")
-st.title("🏙️ Cidade Silenciosa – Mapa 2.5D (sem mapa real)")
+st.set_page_config(page_title="Cidade Silenciosa – Mapa Tático", layout="wide")
+st.title("🏙️ Cidade Silenciosa – Mapa da Cidade")
 
 # ---------- Tela de criação de grupo ----------
 if len(st.session_state.players) == 0:
@@ -83,8 +78,8 @@ else:
     jogador = st.session_state.players[atual]
     x, y = st.session_state.player_positions[atual]
 
-    # Atualizar visitado
-    update_visited(x, y)
+    # Marcar células visitadas (para névoa, opcional – aqui não usamos névoa por clareza)
+    # update_visited(x, y)
 
     # Sidebar
     with st.sidebar:
@@ -94,10 +89,6 @@ else:
             icone = "👉" if i == atual else ("🔵" if rel == 'ally' else "🔴")
             st.write(f"{icone} {p.name} (HP:{p.hp})")
         if st.button("Passar vez ➡️"):
-            for idx in list(st.session_state.action_noise.keys()):
-                st.session_state.action_noise[idx]['turns_left'] -= 1
-                if st.session_state.action_noise[idx]['turns_left'] <= 0:
-                    del st.session_state.action_noise[idx]
             st.session_state.current_player_index = (atual + 1) % total
             st.rerun()
         st.markdown("---")
@@ -273,99 +264,64 @@ else:
             st.session_state.player_positions[atual] = (max(0.1, x - passo), y)
             st.rerun()
 
-    # ---------- MAPA 2.5D (SEM MAPA REAL) ----------
+    # ---------- DESENHO DO MAPA DA CIDADE ----------
     st.markdown("---")
-    predios, ruas, _ = st.session_state.world
+    st.subheader("🗺️ Mapa da Cidade")
 
-    # Prédios: todos aparecem, mas os não visitados ficam escuros
-    predios_vis = []
+    # Criar imagem base (fundo preto)
+    img = Image.new('RGB', (MAP_SIZE, MAP_SIZE), color=(20, 20, 20))
+    draw = ImageDraw.Draw(img)
+
+    # Desenhar ruas (grade a cada 0.2 km, como no gerador)
+    predios, ruas, pois = st.session_state.world
+    for r in ruas:
+        x1, y1 = world_to_pixel(r['x1'], r['y1'])
+        x2, y2 = world_to_pixel(r['x2'], r['y2'])
+        draw.line([(x1, y1), (x2, y2)], fill=(80, 80, 80), width=1)
+
+    # Desenhar prédios (retângulos coloridos)
+    cores_tipo = {
+        'residencial': (160, 160, 160),
+        'comercial': (200, 200, 100),
+        'industrial': (180, 140, 80),
+        'medico': (220, 80, 80),
+        'policial': (80, 80, 220),
+        'escola': (100, 200, 100),
+        'restaurante': (200, 150, 100)
+    }
     for b in predios:
-        if is_visible(b['x'], b['y']) or distance(x, y, b['x'], b['y']) < 0.3:
-            cor = [140, 140, 140]       # cinza médio
-            if b['tipo'] == 'policial': cor = [80, 80, 200]
-            elif b['tipo'] == 'medico': cor = [200, 80, 80]
-        else:
-            cor = [50, 50, 50]           # não explorado = escuro
-        predios_vis.append({**b, 'cor': cor})
+        px, py = world_to_pixel(b['x'], b['y'])
+        cor = cores_tipo.get(b['tipo'], (150, 150, 150))
+        # Desenha um pequeno retângulo
+        draw.rectangle(
+            [(px - BUILDING_RADIUS, py - BUILDING_RADIUS),
+             (px + BUILDING_RADIUS, py + BUILDING_RADIUS)],
+            fill=cor,
+            outline=(50, 50, 50)
+        )
 
-    layer_predios = pdk.Layer(
-        "ColumnLayer",
-        data=predios_vis,
-        get_position="[x, y]",
-        get_elevation="altura",
-        elevation_scale=25,
-        radius=0.06,
-        get_fill_color="cor",
-    )
+    # Desenhar zumbis (pontos pretos) – apenas se estiverem num raio de 0.3 km do jogador
+    for z in st.session_state.zombies:
+        if distance(x, y, z['x'], z['y']) < 0.3:
+            zx, zy = world_to_pixel(z['x'], z['y'])
+            draw.ellipse([(zx-1, zy-1), (zx+1, zy+1)], fill=(0, 0, 0))
 
-    # Ruas
-    linhas = [{'start': [r['x1'], r['y1']], 'end': [r['x2'], r['y2']]} for r in ruas]
-    layer_ruas = pdk.Layer(
-        "LineLayer",
-        data=linhas,
-        get_source_position="start",
-        get_target_position="end",
-        get_color="[180, 180, 180, 200]",
-        get_width=2,
-    )
-
-    # Zumbis próximos
-    zumbis_vis = [z for z in st.session_state.zombies if distance(x, y, z['x'], z['y']) < 0.3]
-    layer_zumbis = pdk.Layer(
-        "ScatterplotLayer",
-        data=zumbis_vis,
-        get_position="[x, y]",
-        get_radius=0.02,
-        radius_scale=20,
-        get_fill_color="[0, 0, 0, 220]",
-    )
-
-    # Jogador atual (verde)
-    layer_jogador = pdk.Layer(
-        "ScatterplotLayer",
-        data=[{'x': x, 'y': y, 'cor': [0, 255, 0]}],
-        get_position="[x, y]",
-        get_radius=0.06,
-        radius_scale=25,
-        get_fill_color="cor",
-    )
-
-    # Outros jogadores
-    outros = []
+    # Desenhar outros jogadores (aliados azuis, inimigos vermelhos)
     for i, p in enumerate(st.session_state.players):
         if i != atual:
-            px, py = st.session_state.player_positions[i]
+            px, py = world_to_pixel(*st.session_state.player_positions[i])
             rel = get_relation(atual, i)
-            cor = [0, 0, 255] if rel == 'ally' else [255, 0, 0]
-            outros.append({'x': px, 'y': py, 'cor': cor})
-    layer_outros = pdk.Layer(
-        "ScatterplotLayer",
-        data=outros,
-        get_position="[x, y]",
-        get_radius=0.06,
-        radius_scale=25,
-        get_fill_color="cor",
-    )
+            cor = (0, 0, 255) if rel == 'ally' else (255, 0, 0)
+            draw.ellipse([(px-5, py-5), (px+5, py+5)], fill=cor, outline=(255, 255, 255))
 
-    # View isométrica, fundo preto, sem mapa base
-    view_state = pdk.ViewState(
-        longitude=x,
-        latitude=y,
-        zoom=12,
-        pitch=60,
-        bearing=45,
-    )
+    # Desenhar jogador atual (verde brilhante)
+    px, py = world_to_pixel(x, y)
+    draw.ellipse([(px-6, py-6), (px+6, py+6)], fill=(0, 255, 0), outline=(255, 255, 255), width=2)
 
-    # Deck explicitamente sem mapa
-    deck = pdk.Deck(
-        layers=[layer_predios, layer_ruas, layer_zumbis, layer_jogador, layer_outros],
-        initial_view_state=view_state,
-        map_provider=None,        # desabilita qualquer mapa base
-        map_style="",             # string vazia
-        parameters={"clearColor": [10, 10, 10, 255]}  # fundo quase preto
-    )
-
-    st.pydeck_chart(deck, use_container_width=True)
+    # Converter imagem para bytes e exibir
+    buf = BytesIO()
+    img.save(buf, format='PNG')
+    st.image(buf, use_column_width=True, caption="Cidade Silenciosa – 10×10 km")
 
     # Verificar mortes
     for i, p in enumerate(st.session_state.players):
