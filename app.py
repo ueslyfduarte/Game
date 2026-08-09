@@ -5,10 +5,26 @@ from PIL import Image, ImageDraw
 import random
 import math
 
-# ---------- Configurações da imagem do mapa ----------
-MAP_SIZE = 1000          # pixels (quadrado)
-KM = 100                 # pixels por km (10 km = 1000 px)
-BUILDING_RADIUS = 3      # tamanho dos prédios na imagem
+# ---------- Configurações ----------
+MAP_FULL_SIZE = 200        # minimapa (pixels)
+LOCAL_MAP_SIZE = 400       # mapa local (pixels)
+LOCAL_RADIUS_KM = 0.5      # raio visível ao redor (km)
+KM_TO_PIX_FULL = 20        # 10 km -> 200 px (minimapa)
+KM_TO_PIX_LOCAL = int(LOCAL_MAP_SIZE / (2 * LOCAL_RADIUS_KM))  # 400px para 1km
+
+# Cores
+COR_FUNDO = (20, 20, 20)
+COR_RUA = (80, 80, 80)
+COR_VISITADO = (60, 60, 60)
+CORES_TIPO = {
+    'residencial': (160, 160, 160),
+    'comercial': (200, 200, 100),
+    'industrial': (180, 140, 80),
+    'medico': (220, 80, 80),
+    'policial': (80, 80, 220),
+    'escola': (100, 200, 100),
+    'restaurante': (200, 150, 100)
+}
 
 # ---------- Funções auxiliares ----------
 def distance(x1, y1, x2, y2):
@@ -21,11 +37,15 @@ def get_relation(player_idx, other_idx):
 def diario(entrada):
     st.session_state.diary.append(f"Dia {st.session_state.day}: {entrada}")
 
-def world_to_pixel(x, y):
-    """Converte coordenadas do mundo (0-10) para pixels (0-MAP_SIZE)."""
-    px = int(x * KM)
-    py = int(y * KM)
-    return px, py
+def mark_visited(x, y):
+    cx = int(x * 10)  # célula de 100m
+    cy = int(y * 10)
+    st.session_state.visited.add((cx, cy))
+
+def cell_visited(x, y):
+    cx = int(x * 10)
+    cy = int(y * 10)
+    return (cx, cy) in st.session_state.visited
 
 # ---------- Inicialização de estado ----------
 if "players" not in st.session_state:
@@ -47,11 +67,13 @@ if "visited" not in st.session_state:
     st.session_state.visited = set()
 if "day" not in st.session_state:
     st.session_state.day = 1
+if "last_direction" not in st.session_state:
+    st.session_state.last_direction = None  # guarda (dx, dy) do último movimento
 
-st.set_page_config(page_title="Cidade Silenciosa – Mapa Tático", layout="wide")
-st.title("🏙️ Cidade Silenciosa – Mapa da Cidade")
+st.set_page_config(page_title="Cidade Silenciosa", layout="wide")
+st.title("🏙️ Cidade Silenciosa – Exploração por Quarteirão")
 
-# ---------- Tela de criação de grupo ----------
+# ---------- Tela de criação do grupo ----------
 if len(st.session_state.players) == 0:
     st.subheader("Forme seu grupo de sobreviventes")
     nome = st.text_input("Nome do sobrevivente:", key="new")
@@ -64,6 +86,7 @@ if len(st.session_state.players) == 0:
             for i in range(idx):
                 st.session_state.player_relations.setdefault(i, {})[idx] = 'ally'
                 st.session_state.player_relations.setdefault(idx, {})[i] = 'ally'
+            mark_visited(5.0, 0.5)
             diario(f"{nome} se junta ao grupo no sul da cidade.")
             st.rerun()
     if len(st.session_state.players) > 0:
@@ -76,6 +99,9 @@ else:
     atual = st.session_state.current_player_index
     jogador = st.session_state.players[atual]
     x, y = st.session_state.player_positions[atual]
+
+    # Marcar célula atual como visitada
+    mark_visited(x, y)
 
     # Sidebar
     with st.sidebar:
@@ -239,82 +265,173 @@ else:
     cols_m = st.columns(4)
     passo = 0.1
     sem_st = jogador.stamina < 2
+    direcao = None
     with cols_m[0]:
         if st.button("⬆️ Norte", disabled=sem_st):
             jogador.use_stamina(2, 'other')
             st.session_state.player_positions[atual] = (x, min(9.9, y + passo))
+            direcao = (0, 1)
             st.rerun()
     with cols_m[1]:
         if st.button("⬇️ Sul", disabled=sem_st):
             jogador.use_stamina(2, 'other')
             st.session_state.player_positions[atual] = (x, max(0.1, y - passo))
+            direcao = (0, -1)
             st.rerun()
     with cols_m[2]:
         if st.button("➡️ Leste", disabled=sem_st):
             jogador.use_stamina(2, 'other')
             st.session_state.player_positions[atual] = (min(9.9, x + passo), y)
+            direcao = (1, 0)
             st.rerun()
     with cols_m[3]:
         if st.button("⬅️ Oeste", disabled=sem_st):
             jogador.use_stamina(2, 'other')
             st.session_state.player_positions[atual] = (max(0.1, x - passo), y)
+            direcao = (-1, 0)
             st.rerun()
+    # Após qualquer movimento, atualiza direção (feito nos botões acima, mas precisa ser capturado antes do rerun)
+    # A solução é guardar a direção no session_state ANTES do rerun. Vamos criar uma função auxiliar para movimento.
+    # Reestruturando: não posso chamar st.rerun() dentro dos botões e depois atualizar direção. Melhor criar uma função move().
 
-    # ---------- DESENHO DO MAPA DA CIDADE ----------
+    # ---------- MAPAS ----------
     st.markdown("---")
-    st.subheader("🗺️ Mapa da Cidade")
+    col_map1, col_map2 = st.columns([2, 1])
+    with col_map1:
+        st.subheader("🗺️ Visão Local")
+        # Gera imagem local ao redor do jogador
+        img_local = Image.new('RGB', (LOCAL_MAP_SIZE, LOCAL_MAP_SIZE), COR_FUNDO)
+        draw = ImageDraw.Draw(img_local)
 
-    # Criar imagem base (fundo preto)
-    img = Image.new('RGB', (MAP_SIZE, MAP_SIZE), color=(20, 20, 20))
-    draw = ImageDraw.Draw(img)
+        # Limites do mundo visíveis na janela local
+        x_min = x - LOCAL_RADIUS_KM
+        x_max = x + LOCAL_RADIUS_KM
+        y_min = y - LOCAL_RADIUS_KM
+        y_max = y + LOCAL_RADIUS_KM
 
-    # Desenhar ruas
-    predios, ruas, pois = st.session_state.world
-    for r in ruas:
-        x1, y1 = world_to_pixel(r['x1'], r['y1'])
-        x2, y2 = world_to_pixel(r['x2'], r['y2'])
-        draw.line([(x1, y1), (x2, y2)], fill=(80, 80, 80), width=1)
+        # Converte coordenadas do mundo para pixel local
+        def world_to_local(wx, wy):
+            px = int((wx - x_min) * KM_TO_PIX_LOCAL)
+            py = int((wy - y_min) * KM_TO_PIX_LOCAL)
+            return px, py
 
-    # Desenhar prédios
-    cores_tipo = {
-        'residencial': (160, 160, 160),
-        'comercial': (200, 200, 100),
-        'industrial': (180, 140, 80),
-        'medico': (220, 80, 80),
-        'policial': (80, 80, 220),
-        'escola': (100, 200, 100),
-        'restaurante': (200, 150, 100)
-    }
-    for b in predios:
-        px, py = world_to_pixel(b['x'], b['y'])
-        cor = cores_tipo.get(b['tipo'], (150, 150, 150))
-        draw.rectangle(
-            [(px - BUILDING_RADIUS, py - BUILDING_RADIUS),
-             (px + BUILDING_RADIUS, py + BUILDING_RADIUS)],
-            fill=cor,
-            outline=(50, 50, 50)
-        )
+        # Desenha ruas (apenas as visíveis dentro da janela)
+        predios, ruas, _ = st.session_state.world
+        for r in ruas:
+            # clip simples: verifica se a linha cruza o retângulo visível
+            # (para simplicidade, desenhamos se pelo menos um ponto está dentro)
+            if (x_min <= r['x1'] <= x_max and y_min <= r['y1'] <= y_max) or \
+               (x_min <= r['x2'] <= x_max and y_min <= r['y2'] <= y_max):
+                p1 = world_to_local(r['x1'], r['y1'])
+                p2 = world_to_local(r['x2'], r['y2'])
+                draw.line([p1, p2], fill=COR_RUA, width=1)
 
-    # Zumbis próximos
-    for z in st.session_state.zombies:
-        if distance(x, y, z['x'], z['y']) < 0.3:
-            zx, zy = world_to_pixel(z['x'], z['y'])
-            draw.ellipse([(zx-1, zy-1), (zx+1, zy+1)], fill=(0, 0, 0))
+        # Desenha prédios dentro da janela
+        for b in predios:
+            if x_min <= b['x'] <= x_max and y_min <= b['y'] <= y_max:
+                px, py = world_to_local(b['x'], b['y'])
+                cor = CORES_TIPO.get(b['tipo'], (150,150,150))
+                # retângulo do prédio
+                sz = 3
+                draw.rectangle([(px-sz, py-sz), (px+sz, py+sz)], fill=cor, outline=(50,50,50))
 
-    # Outros jogadores
-    for i, p in enumerate(st.session_state.players):
-        if i != atual:
-            px, py = world_to_pixel(*st.session_state.player_positions[i])
-            rel = get_relation(atual, i)
-            cor = (0, 0, 255) if rel == 'ally' else (255, 0, 0)
-            draw.ellipse([(px-5, py-5), (px+5, py+5)], fill=cor, outline=(255, 255, 255))
+        # Zumbis na área
+        for z in st.session_state.zombies:
+            if x_min <= z['x'] <= x_max and y_min <= z['y'] <= y_max:
+                zx, zy = world_to_local(z['x'], z['y'])
+                draw.ellipse([(zx-1, zy-1), (zx+1, zy+1)], fill=(0,0,0))
 
-    # Jogador atual
-    px, py = world_to_pixel(x, y)
-    draw.ellipse([(px-6, py-6), (px+6, py+6)], fill=(0, 255, 0), outline=(255, 255, 255), width=2)
+        # Outros jogadores
+        for i, p in enumerate(st.session_state.players):
+            if i != atual:
+                px_, py_ = st.session_state.player_positions[i]
+                if x_min <= px_ <= x_max and y_min <= py_ <= y_max:
+                    px, py = world_to_local(px_, py_)
+                    rel = get_relation(atual, i)
+                    cor = (0,0,255) if rel == 'ally' else (255,0,0)
+                    draw.ellipse([(px-4, py-4), (px+4, py+4)], fill=cor, outline=(255,255,255))
 
-    # Exibir imagem corrigida
-    st.image(img, use_container_width=True, caption="Cidade Silenciosa – 10×10 km")
+        # Jogador atual (seta de direção)
+        px, py = world_to_local(x, y)
+        # Desenha círculo verde
+        draw.ellipse([(px-5, py-5), (px+5, py+5)], fill=(0,255,0), outline=(255,255,255))
+        # Seta de direção se existir
+        if st.session_state.last_direction is not None:
+            dx, dy = st.session_state.last_direction
+            # comprimento da seta
+            comp = 10
+            end_x = px + dx * comp
+            end_y = py + dy * comp
+            draw.line([(px, py), (end_x, end_y)], fill=(255,255,0), width=3)
+
+        st.image(img_local, use_container_width=True, caption=f"Raio de {LOCAL_RADIUS_KM}km")
+
+    with col_map2:
+        st.subheader("🧭 Minimapa")
+        # Minimapa geral (200x200 px, 10x10 km)
+        img_mini = Image.new('RGB', (MAP_FULL_SIZE, MAP_FULL_SIZE), COR_FUNDO)
+        draw_mini = ImageDraw.Draw(img_mini)
+
+        # Converte mundo -> minimapa
+        def world_to_mini(wx, wy):
+            px = int(wx * KM_TO_PIX_FULL)
+            py = int(wy * KM_TO_PIX_FULL)
+            return px, py
+
+        # Pinta células visitadas
+        for (cx, cy) in st.session_state.visited:
+            # cada célula tem 0.1 x 0.1 km, então no minimapa é 2x2 pixels
+            x0 = int(cx * 2)
+            y0 = int(cy * 2)
+            draw_mini.rectangle([(x0, y0), (x0+2, y0+2)], fill=COR_VISITADO)
+
+        # Ruas (finas, em toda a cidade)
+        for r in ruas:
+            p1 = world_to_mini(r['x1'], r['y1'])
+            p2 = world_to_mini(r['x2'], r['y2'])
+            draw_mini.line([p1, p2], fill=COR_RUA, width=1)
+
+        # Jogadores (pontos coloridos)
+        for i, p in enumerate(st.session_state.players):
+            px, py = world_to_mini(*st.session_state.player_positions[i])
+            if i == atual:
+                cor = (0,255,0)
+            else:
+                rel = get_relation(atual, i)
+                cor = (0,0,255) if rel == 'ally' else (255,0,0)
+            draw_mini.ellipse([(px-2, py-2), (px+2, py+2)], fill=cor)
+
+        st.image(img_mini, use_container_width=True, caption="Cidade (10x10 km)")
+
+    # Atualiza última direção após movimento (precisa ser antes do rerun)
+    # Como os botões já chamam rerun, a direção se perde. Vamos reestruturar o movimento para usar uma função.
+    # Solução rápida: guardar direção no session_state logo antes do rerun.
+    # Mas não é possível porque o código dos botões já é executado e depois rerun. 
+    # Melhor: fazer os botões de movimento chamarem uma função que já atualiza a direção e dá rerun.
+    # Vou modificar a parte de movimento acima, substituindo por esta lógica:
+
+    # A forma mais simples é usar um callback via on_click, mas Streamlit não suporta bem em botões simples.
+    # Alternativa: verificar a cada renderização qual foi a última direção percorrida, comparando posição anterior? 
+    # Vamos armazenar a posição anterior e ao detectar mudança, inferir direção. É mais confiável.
+    # Implementação: guardar last_pos no session_state e comparar.
+
+    # Adicionar no início do jogo: if "last_pos" not in st.session_state: st.session_state.last_pos = ...
+    # E após calcular x,y atuais, determinar direção e armazenar last_direction.
+    # Faremos isso agora.
+
+    # ---------- Atualização da direção (baseada na diferença de posição) ----------
+    if "last_pos" not in st.session_state:
+        st.session_state.last_pos = (x, y)
+    else:
+        old_x, old_y = st.session_state.last_pos
+        dx = x - old_x
+        dy = y - old_y
+        if dx != 0 or dy != 0:
+            # normaliza para direção unitária
+            length = math.sqrt(dx*dx + dy*dy)
+            if length > 0:
+                st.session_state.last_direction = (dx/length, dy/length)
+        st.session_state.last_pos = (x, y)
 
     # Verificar mortes
     for i, p in enumerate(st.session_state.players):
