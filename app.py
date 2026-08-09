@@ -8,14 +8,25 @@ import random
 import math
 
 # ---------- Configurações ----------
-LOCAL_RADIUS_KM = 0.5            # raio visível 3D (km)
-BUILDING_BASE = 0.01             # tamanho horizontal do prédio (km)
-BUILDING_HEIGHT_SCALE = 0.005    # altura visual (km por unidade)
-MAP_FULL_SIZE = 200              # minimapa (pixels)
-KM_TO_PIX_FULL = 20              # 10 km -> 200 px
+LOCAL_RADIUS_KM = 0.5
+BUILDING_HEIGHT_SCALE = 0.008   # mais altura
+BUILDING_BASE = 0.015           # base maior (15m)
+MAP_FULL_SIZE = 200
+KM_TO_PIX_FULL = 20
 COR_FUNDO = (20, 20, 20)
-ZOMBIE_DETECT_RADIUS = 0.2      # km
-ZOMBIE_SPEED = 0.03             # km por ação
+ZOMBIE_DETECT_RADIUS = 0.2
+ZOMBIE_SPEED = 0.03
+
+# Mapeamento de alturas e larguras por tipo
+TYPE_CONFIG = {
+    'residencial': {'max_h': 0.02, 'base': 0.025, 'cor': (160, 160, 160)},
+    'comercial':    {'max_h': 0.04, 'base': 0.02, 'cor': (200, 200, 100)},
+    'industrial':   {'max_h': 0.05, 'base': 0.025, 'cor': (180, 140, 80)},
+    'medico':       {'max_h': 0.06, 'base': 0.02, 'cor': (220, 80, 80)},
+    'policial':     {'max_h': 0.07, 'base': 0.02, 'cor': (80, 80, 220)},
+    'escola':       {'max_h': 0.03, 'base': 0.025, 'cor': (100, 200, 100)},
+    'restaurante':  {'max_h': 0.02, 'base': 0.025, 'cor': (200, 150, 100)}
+}
 
 # ---------- Funções auxiliares ----------
 def distance(x1, y1, x2, y2):
@@ -34,19 +45,16 @@ def mark_visited(x, y):
     st.session_state.visited.add((cx, cy))
 
 def update_zombies(player_x, player_y):
-    """Move zumbis que detectaram o jogador."""
     for z in st.session_state.zombies:
         if distance(z['x'], z['y'], player_x, player_y) < ZOMBIE_DETECT_RADIUS:
-            # direção do zumbi ao jogador
             dx = player_x - z['x']
             dy = player_y - z['y']
             dist = math.sqrt(dx*dx + dy*dy)
             if dist > 0:
-                step = min(ZOMBIE_SPEED, dist)  # não ultrapassa o jogador
+                step = min(ZOMBIE_SPEED, dist)
                 z['x'] += (dx / dist) * step
                 z['y'] += (dy / dist) * step
 
-# ---------- Mesh de prédios ----------
 def add_building_mesh(vertices, faces, x, y, largura, altura, z_base=0):
     w = largura / 2.0
     h = altura
@@ -107,7 +115,7 @@ if len(st.session_state.players) == 0:
             idx = len(st.session_state.players)
             p = Player(nome)
             st.session_state.players.append(p)
-            st.session_state.player_positions[idx] = (5.0, 0.5)  # sul
+            st.session_state.player_positions[idx] = (5.0, 0.5)
             for i in range(idx):
                 st.session_state.player_relations.setdefault(i, {})[idx] = 'ally'
                 st.session_state.player_relations.setdefault(idx, {})[i] = 'ally'
@@ -126,12 +134,10 @@ else:
     jogador = st.session_state.players[atual]
     x, y = st.session_state.player_positions[atual]
 
-    # Se uma ação foi executada no ciclo anterior, move os zumbis
     if st.session_state.action_just_taken:
         update_zombies(x, y)
         st.session_state.action_just_taken = False
 
-    # Marcar visita e atualizar direção
     mark_visited(x, y)
     if st.session_state.last_pos is not None:
         old_x, old_y = st.session_state.last_pos
@@ -222,7 +228,6 @@ else:
                         st.rerun()
         else:
             st.write("Nenhum item para usar.")
-
     with tab2:
         for msg in reversed(st.session_state.diary[-30:]):
             st.write(msg)
@@ -335,24 +340,36 @@ else:
         x_min, x_max = x - LOCAL_RADIUS_KM, x + LOCAL_RADIUS_KM
         y_min, y_max = y - LOCAL_RADIUS_KM, y + LOCAL_RADIUS_KM
 
+        # Chão da cidade
+        vertices_floor = [
+            [x_min, y_min, 0], [x_max, y_min, 0], [x_max, y_max, 0], [x_min, y_max, 0]
+        ]
+        faces_floor = [[0, 1, 2], [0, 2, 3]]
+        mesh_floor = go.Mesh3d(
+            x=[v[0] for v in vertices_floor],
+            y=[v[1] for v in vertices_floor],
+            z=[v[2] for v in vertices_floor],
+            i=[f[0] for f in faces_floor],
+            j=[f[1] for f in faces_floor],
+            k=[f[2] for f in faces_floor],
+            facecolor=['rgb(30,30,30)', 'rgb(30,30,30)'],
+            opacity=1.0,
+            name='Chão'
+        )
+
         # Prédios
         vertices = []
         faces = []
         cores_predios = []
         for b in predios:
             if x_min <= b['x'] <= x_max and y_min <= b['y'] <= y_max:
-                altura_km = min(0.06, max(0.01, b['altura'] * BUILDING_HEIGHT_SCALE))
-                cor_rgb = {
-                    'residencial': (160, 160, 160),
-                    'comercial': (200, 200, 100),
-                    'industrial': (180, 140, 80),
-                    'medico': (220, 80, 80),
-                    'policial': (80, 80, 220),
-                    'escola': (100, 200, 100),
-                    'restaurante': (200, 150, 100)
-                }.get(b['tipo'], (150,150,150))
-                add_building_mesh(vertices, faces, b['x'], b['y'], BUILDING_BASE, altura_km)
-                cores_predios.extend([cor_rgb] * 12)
+                cfg = TYPE_CONFIG.get(b['tipo'], TYPE_CONFIG['residencial'])
+                h = min(cfg['max_h'], b['altura'] * BUILDING_HEIGHT_SCALE)
+                h = max(h, 0.005)  # pelo menos 5 metros
+                base = cfg['base']
+                cor = cfg['cor']
+                add_building_mesh(vertices, faces, b['x'], b['y'], base, h)
+                cores_predios.extend([cor] * 12)
         mesh_predios = go.Mesh3d(
             x=[v[0] for v in vertices],
             y=[v[1] for v in vertices],
@@ -361,23 +378,44 @@ else:
             j=[face[1] for face in faces],
             k=[face[2] for face in faces],
             facecolor=[f'rgb({c[0]},{c[1]},{c[2]})' for c in cores_predios],
-            opacity=0.9,
-            name='Prédios'
+            opacity=1.0,
+            name='Prédios',
+            flatshading=True
         )
 
-        # Ruas
+        # Ruas como faixas largas (linhas grossas)
         ruas_x, ruas_y, ruas_z = [], [], []
         for r in ruas:
             if (x_min <= r['x1'] <= x_max and y_min <= r['y1'] <= y_max) or \
                (x_min <= r['x2'] <= x_max and y_min <= r['y2'] <= y_max):
                 ruas_x.extend([r['x1'], r['x2'], None])
                 ruas_y.extend([r['y1'], r['y2'], None])
-                ruas_z.extend([0, 0, None])
+                ruas_z.extend([0.001, 0.001, None])
         trace_ruas = go.Scatter3d(
             x=ruas_x, y=ruas_y, z=ruas_z,
             mode='lines',
-            line=dict(color='gray', width=2),
+            line=dict(color='lightgray', width=4),
             name='Ruas'
+        )
+        # Calçadas (linhas brancas ao lado das ruas)
+        calcadas_x, calcadas_y, calcadas_z = [], [], []
+        offset = 0.015
+        for r in ruas:
+            if r['x1'] == r['x2']:  # vertical
+                x = r['x1']
+                calcadas_x.extend([x - offset, x - offset, None, x + offset, x + offset, None])
+                calcadas_y.extend([r['y1'], r['y2'], None, r['y1'], r['y2'], None])
+                calcadas_z.extend([0.001, 0.001, None, 0.001, 0.001, None])
+            else:  # horizontal
+                y = r['y1']
+                calcadas_y.extend([y - offset, y - offset, None, y + offset, y + offset, None])
+                calcadas_x.extend([r['x1'], r['x2'], None, r['x1'], r['x2'], None])
+                calcadas_z.extend([0.001, 0.001, None, 0.001, 0.001, None])
+        trace_calcadas = go.Scatter3d(
+            x=calcadas_x, y=calcadas_y, z=calcadas_z,
+            mode='lines',
+            line=dict(color='white', width=1.5),
+            name='Calçadas'
         )
 
         # Zumbis
@@ -435,22 +473,24 @@ else:
                 name='Direção'
             )
 
-        fig = go.Figure(data=[mesh_predios, trace_ruas, trace_zumbis, trace_outros, trace_jogador] +
-                             ([direcao_trace] if direcao_trace else []))
+        fig = go.Figure(data=[
+            mesh_floor, mesh_predios, trace_ruas, trace_calcadas,
+            trace_zumbis, trace_outros, trace_jogador
+        ] + ([direcao_trace] if direcao_trace else []))
         fig.update_layout(
             scene=dict(
                 xaxis=dict(range=[x_min, x_max], visible=False),
                 yaxis=dict(range=[y_min, y_max], visible=False),
                 zaxis=dict(range=[0, 0.1], visible=False),
                 aspectmode='manual',
-                aspectratio=dict(x=1, y=1, z=0.3),
+                aspectratio=dict(x=1, y=1, z=0.4),
                 bgcolor='rgb(20,20,20)'
             ),
             paper_bgcolor='rgb(20,20,20)',
             margin=dict(l=0, r=0, t=0, b=0),
             showlegend=False
         )
-        fig.update_scenes(camera=dict(eye=dict(x=1.5, y=1.5, z=0.8)))
+        fig.update_scenes(camera=dict(eye=dict(x=2.0, y=2.0, z=1.2)))
         st.plotly_chart(fig, use_container_width=True)
 
     with col_map2:
