@@ -4,7 +4,6 @@ from mapa_gerador import gerar_mundo, gerar_zumbis, get_loot_table
 from PIL import Image, ImageDraw
 import random
 import math
-from io import BytesIO
 
 # ---------- Configurações da imagem do mapa ----------
 MAP_SIZE = 1000          # pixels (quadrado)
@@ -77,9 +76,6 @@ else:
     atual = st.session_state.current_player_index
     jogador = st.session_state.players[atual]
     x, y = st.session_state.player_positions[atual]
-
-    # Marcar células visitadas (para névoa, opcional – aqui não usamos névoa por clareza)
-    # update_visited(x, y)
 
     # Sidebar
     with st.sidebar:
@@ -272,14 +268,14 @@ else:
     img = Image.new('RGB', (MAP_SIZE, MAP_SIZE), color=(20, 20, 20))
     draw = ImageDraw.Draw(img)
 
-    # Desenhar ruas (grade a cada 0.2 km, como no gerador)
+    # Desenhar ruas
     predios, ruas, pois = st.session_state.world
     for r in ruas:
         x1, y1 = world_to_pixel(r['x1'], r['y1'])
         x2, y2 = world_to_pixel(r['x2'], r['y2'])
         draw.line([(x1, y1), (x2, y2)], fill=(80, 80, 80), width=1)
 
-    # Desenhar prédios (retângulos coloridos)
+    # Desenhar prédios
     cores_tipo = {
         'residencial': (160, 160, 160),
         'comercial': (200, 200, 100),
@@ -292,7 +288,6 @@ else:
     for b in predios:
         px, py = world_to_pixel(b['x'], b['y'])
         cor = cores_tipo.get(b['tipo'], (150, 150, 150))
-        # Desenha um pequeno retângulo
         draw.rectangle(
             [(px - BUILDING_RADIUS, py - BUILDING_RADIUS),
              (px + BUILDING_RADIUS, py + BUILDING_RADIUS)],
@@ -300,13 +295,13 @@ else:
             outline=(50, 50, 50)
         )
 
-    # Desenhar zumbis (pontos pretos) – apenas se estiverem num raio de 0.3 km do jogador
+    # Zumbis próximos
     for z in st.session_state.zombies:
         if distance(x, y, z['x'], z['y']) < 0.3:
             zx, zy = world_to_pixel(z['x'], z['y'])
             draw.ellipse([(zx-1, zy-1), (zx+1, zy+1)], fill=(0, 0, 0))
 
-    # Desenhar outros jogadores (aliados azuis, inimigos vermelhos)
+    # Outros jogadores
     for i, p in enumerate(st.session_state.players):
         if i != atual:
             px, py = world_to_pixel(*st.session_state.player_positions[i])
@@ -314,14 +309,12 @@ else:
             cor = (0, 0, 255) if rel == 'ally' else (255, 0, 0)
             draw.ellipse([(px-5, py-5), (px+5, py+5)], fill=cor, outline=(255, 255, 255))
 
-    # Desenhar jogador atual (verde brilhante)
+    # Jogador atual
     px, py = world_to_pixel(x, y)
     draw.ellipse([(px-6, py-6), (px+6, py+6)], fill=(0, 255, 0), outline=(255, 255, 255), width=2)
 
-    # Converter imagem para bytes e exibir
-    buf = BytesIO()
-    img.save(buf, format='PNG')
-    st.image(buf, use_column_width=True, caption="Cidade Silenciosa – 10×10 km")
+    # Exibir imagem corrigida
+    st.image(img, use_container_width=True, caption="Cidade Silenciosa – 10×10 km")
 
     # Verificar mortes
     for i, p in enumerate(st.session_state.players):
