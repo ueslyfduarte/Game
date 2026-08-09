@@ -10,10 +10,12 @@ import math
 # ---------- Configurações ----------
 LOCAL_RADIUS_KM = 0.5            # raio visível 3D (km)
 BUILDING_BASE = 0.01             # tamanho horizontal do prédio (km)
-BUILDING_HEIGHT_SCALE = 0.005    # fator para altura visual (km por unidade de altura)
+BUILDING_HEIGHT_SCALE = 0.005    # altura visual (km por unidade)
 MAP_FULL_SIZE = 200              # minimapa (pixels)
 KM_TO_PIX_FULL = 20              # 10 km -> 200 px
 COR_FUNDO = (20, 20, 20)
+ZOMBIE_DETECT_RADIUS = 0.2      # km
+ZOMBIE_SPEED = 0.03             # km por ação
 
 # ---------- Funções auxiliares ----------
 def distance(x1, y1, x2, y2):
@@ -31,12 +33,23 @@ def mark_visited(x, y):
     cy = int(y * 10)
     st.session_state.visited.add((cx, cy))
 
-# ---------- Geração de mesh para prédios ----------
+def update_zombies(player_x, player_y):
+    """Move zumbis que detectaram o jogador."""
+    for z in st.session_state.zombies:
+        if distance(z['x'], z['y'], player_x, player_y) < ZOMBIE_DETECT_RADIUS:
+            # direção do zumbi ao jogador
+            dx = player_x - z['x']
+            dy = player_y - z['y']
+            dist = math.sqrt(dx*dx + dy*dy)
+            if dist > 0:
+                step = min(ZOMBIE_SPEED, dist)  # não ultrapassa o jogador
+                z['x'] += (dx / dist) * step
+                z['y'] += (dy / dist) * step
+
+# ---------- Mesh de prédios ----------
 def add_building_mesh(vertices, faces, x, y, largura, altura, z_base=0):
-    """Adiciona um cuboide centrado em (x, y) ao mesh."""
     w = largura / 2.0
     h = altura
-    # 8 vértices
     v0 = len(vertices)
     vertices.append([x - w, y - w, z_base])
     vertices.append([x + w, y - w, z_base])
@@ -46,11 +59,10 @@ def add_building_mesh(vertices, faces, x, y, largura, altura, z_base=0):
     vertices.append([x + w, y - w, z_base + h])
     vertices.append([x + w, y + w, z_base + h])
     vertices.append([x - w, y + w, z_base + h])
-    # 12 triângulos (faces)
     faces.extend([
-        [v0, v0+1, v0+2], [v0, v0+2, v0+3],  # base
-        [v0+4, v0+7, v0+6], [v0+4, v0+6, v0+5],  # topo
-        [v0, v0+4, v0+5], [v0, v0+5, v0+1],  # lateral
+        [v0, v0+1, v0+2], [v0, v0+2, v0+3],
+        [v0+4, v0+7, v0+6], [v0+4, v0+6, v0+5],
+        [v0, v0+4, v0+5], [v0, v0+5, v0+1],
         [v0+1, v0+5, v0+6], [v0+1, v0+6, v0+2],
         [v0+2, v0+6, v0+7], [v0+2, v0+7, v0+3],
         [v0+3, v0+7, v0+4], [v0+3, v0+4, v0]
@@ -80,6 +92,8 @@ if "last_pos" not in st.session_state:
     st.session_state.last_pos = None
 if "last_direction" not in st.session_state:
     st.session_state.last_direction = None
+if "action_just_taken" not in st.session_state:
+    st.session_state.action_just_taken = False
 
 st.set_page_config(page_title="Cidade Silenciosa 3D", layout="wide")
 st.title("🏙️ Cidade Silenciosa – Exploração 3D")
@@ -112,10 +126,13 @@ else:
     jogador = st.session_state.players[atual]
     x, y = st.session_state.player_positions[atual]
 
-    # Marcar visita
-    mark_visited(x, y)
+    # Se uma ação foi executada no ciclo anterior, move os zumbis
+    if st.session_state.action_just_taken:
+        update_zombies(x, y)
+        st.session_state.action_just_taken = False
 
-    # Atualizar direção (baseado na diferença de posição)
+    # Marcar visita e atualizar direção
+    mark_visited(x, y)
     if st.session_state.last_pos is not None:
         old_x, old_y = st.session_state.last_pos
         dx = x - old_x
@@ -168,8 +185,47 @@ else:
         arma = jogador.equipped_weapon['nome'] if jogador.equipped_weapon else "Desarmado"
         st.write(f"**Arma:** {arma}")
 
-    # Abas inventário/diário (mantidas iguais, omitidas aqui para brevidade – cole as abas do código anterior)
-    # ... (use as mesmas abas de inventário e diário que já funcionavam)
+    # Abas inventário / diário
+    tab1, tab2 = st.tabs(["🎒 Inventário", "📜 Diário"])
+    with tab1:
+        if not jogador.inventory:
+            st.write("Vazio.")
+        else:
+            for item in jogador.inventory:
+                st.write(f"{item['nome']} x{item['quantidade']} ({item['tipo']}, {item['peso']}kg)")
+        st.write("---")
+        st.write("**Usar item:**")
+        itens_nomes = [item['nome'] for item in jogador.inventory]
+        if itens_nomes:
+            item_escolhido = st.selectbox("Item:", itens_nomes)
+            if st.button("Usar"):
+                for it in jogador.inventory:
+                    if it['nome'] == item_escolhido:
+                        tipo = it['tipo']
+                        if tipo == 'comida':
+                            jogador.eat(25, 'bom')
+                            diario(f"{jogador.name} comeu {item_escolhido}.")
+                        elif tipo == 'água':
+                            jogador.drink(40, 'limpa')
+                            diario(f"{jogador.name} bebeu {item_escolhido}.")
+                        elif tipo == 'medicamento':
+                            jogador.treat_infection(40)
+                            diario(f"{jogador.name} usou {item_escolhido}.")
+                        elif tipo in ('arma_branca', 'arma_fogo'):
+                            jogador.equipped_weapon = it
+                            diario(f"{jogador.name} equipou {item_escolhido}.")
+                        else:
+                            st.warning("Item não utilizável.")
+                            break
+                        jogador.remove_item(item_escolhido, 1)
+                        st.session_state.action_just_taken = True
+                        st.rerun()
+        else:
+            st.write("Nenhum item para usar.")
+
+    with tab2:
+        for msg in reversed(st.session_state.diary[-30:]):
+            st.write(msg)
 
     # Ações
     st.subheader("Ações")
@@ -187,6 +243,7 @@ else:
                     diario(f"{jogador.name} ataca um zumbi causando {dano} de dano, mas sofre um arranhão.")
                 else:
                     diario(f"{jogador.name} golpeia o ar. Nenhum zumbi por perto.")
+                st.session_state.action_just_taken = True
                 st.rerun()
         if st.button("🛡️ Defender (5 ST)"):
             if jogador.stamina < 5:
@@ -194,6 +251,7 @@ else:
             else:
                 jogador.use_stamina(5, 'direct')
                 diario(f"{jogador.name} fica em posição defensiva.")
+                st.session_state.action_just_taken = True
                 st.rerun()
     with cB:
         if st.button("💤 Descansar"):
@@ -202,6 +260,7 @@ else:
             diario(f"{jogador.name} descansa. Um novo dia amanhece.")
             if random.randint(1,3) == 1:
                 jogador.degrade_skills()
+            st.session_state.action_just_taken = True
             st.rerun()
     with cC:
         if st.button("🔍 Vasculhar área (5 ST)"):
@@ -234,8 +293,10 @@ else:
                             else:
                                 diario(f"{jogador.name} vasculha, mas não acha nada útil.")
                         poi['looted'] = True
+                        st.session_state.action_just_taken = True
                         st.rerun()
                 diario(f"{jogador.name} não há nada para vasculhar nas proximidades.")
+                st.session_state.action_just_taken = True
                 st.rerun()
 
     # Movimentação
@@ -246,18 +307,22 @@ else:
     if cols_m[0].button("⬆️ Norte", disabled=sem_st):
         jogador.use_stamina(2, 'other')
         st.session_state.player_positions[atual] = (x, min(9.9, y + passo))
+        st.session_state.action_just_taken = True
         st.rerun()
     if cols_m[1].button("⬇️ Sul", disabled=sem_st):
         jogador.use_stamina(2, 'other')
         st.session_state.player_positions[atual] = (x, max(0.1, y - passo))
+        st.session_state.action_just_taken = True
         st.rerun()
     if cols_m[2].button("➡️ Leste", disabled=sem_st):
         jogador.use_stamina(2, 'other')
         st.session_state.player_positions[atual] = (min(9.9, x + passo), y)
+        st.session_state.action_just_taken = True
         st.rerun()
     if cols_m[3].button("⬅️ Oeste", disabled=sem_st):
         jogador.use_stamina(2, 'other')
         st.session_state.player_positions[atual] = (max(0.1, x - passo), y)
+        st.session_state.action_just_taken = True
         st.rerun()
 
     # ---------- MAPA 3D LOCAL ----------
@@ -266,19 +331,16 @@ else:
 
     with col_map1:
         st.subheader("🏢 Visão 3D (raio de 0.5 km)")
-
-        # Dados do mundo
         predios, ruas, _ = st.session_state.world
         x_min, x_max = x - LOCAL_RADIUS_KM, x + LOCAL_RADIUS_KM
         y_min, y_max = y - LOCAL_RADIUS_KM, y + LOCAL_RADIUS_KM
 
-        # Construir mesh dos prédios visíveis
+        # Prédios
         vertices = []
         faces = []
         cores_predios = []
         for b in predios:
             if x_min <= b['x'] <= x_max and y_min <= b['y'] <= y_max:
-                # altura visual: limitar entre 0.01 e 0.06 km (10 a 60 metros)
                 altura_km = min(0.06, max(0.01, b['altura'] * BUILDING_HEIGHT_SCALE))
                 cor_rgb = {
                     'residencial': (160, 160, 160),
@@ -290,9 +352,7 @@ else:
                     'restaurante': (200, 150, 100)
                 }.get(b['tipo'], (150,150,150))
                 add_building_mesh(vertices, faces, b['x'], b['y'], BUILDING_BASE, altura_km)
-                cores_predios.extend([cor_rgb] * 12)  # 12 triângulos por prédio
-
-        # Criar mesh 3D dos prédios
+                cores_predios.extend([cor_rgb] * 12)
         mesh_predios = go.Mesh3d(
             x=[v[0] for v in vertices],
             y=[v[1] for v in vertices],
@@ -305,10 +365,8 @@ else:
             name='Prédios'
         )
 
-        # Ruas (linhas)
-        ruas_x = []
-        ruas_y = []
-        ruas_z = []
+        # Ruas
+        ruas_x, ruas_y, ruas_z = [], [], []
         for r in ruas:
             if (x_min <= r['x1'] <= x_max and y_min <= r['y1'] <= y_max) or \
                (x_min <= r['x2'] <= x_max and y_min <= r['y2'] <= y_max):
@@ -328,7 +386,7 @@ else:
             if x_min <= z['x'] <= x_max and y_min <= z['y'] <= y_max:
                 zumbis_x.append(z['x'])
                 zumbis_y.append(z['y'])
-                zumbis_z.append(0.005)  # levemente acima do chão
+                zumbis_z.append(0.005)
         trace_zumbis = go.Scatter3d(
             x=zumbis_x, y=zumbis_y, z=zumbis_z,
             mode='markers',
@@ -355,7 +413,7 @@ else:
             name='Outros'
         )
 
-        # Jogador atual (esfera verde)
+        # Jogador
         trace_jogador = go.Scatter3d(
             x=[x], y=[y], z=[0.015],
             mode='markers',
@@ -367,7 +425,7 @@ else:
         direcao_trace = None
         if st.session_state.last_direction is not None:
             dx, dy = st.session_state.last_direction
-            comp = 0.04  # 40 metros
+            comp = 0.04
             end_x = x + dx * comp
             end_y = y + dy * comp
             direcao_trace = go.Scatter3d(
@@ -377,7 +435,6 @@ else:
                 name='Direção'
             )
 
-        # Configuração do layout 3D
         fig = go.Figure(data=[mesh_predios, trace_ruas, trace_zumbis, trace_outros, trace_jogador] +
                              ([direcao_trace] if direcao_trace else []))
         fig.update_layout(
@@ -398,21 +455,17 @@ else:
 
     with col_map2:
         st.subheader("🧭 Minimapa")
-        # Minimapa com Pillow (igual ao código anterior)
         img_mini = Image.new('RGB', (MAP_FULL_SIZE, MAP_FULL_SIZE), COR_FUNDO)
         draw_mini = ImageDraw.Draw(img_mini)
         def world_to_mini(wx, wy):
             return int(wx * KM_TO_PIX_FULL), int(wy * KM_TO_PIX_FULL)
-        # Células visitadas
         for (cx, cy) in st.session_state.visited:
             x0, y0 = int(cx * 2), int(cy * 2)
             draw_mini.rectangle([(x0, y0), (x0+2, y0+2)], fill=(60,60,60))
-        # Ruas
         for r in ruas:
             p1 = world_to_mini(r['x1'], r['y1'])
             p2 = world_to_mini(r['x2'], r['y2'])
             draw_mini.line([p1, p2], fill=(80,80,80), width=1)
-        # Jogadores
         for i, p in enumerate(st.session_state.players):
             px, py = world_to_mini(*st.session_state.player_positions[i])
             if i == atual:
