@@ -324,7 +324,7 @@ else:
 
     m = folium.Map(location=[0.5, 0.5], zoom_start=12, crs='Simple')
     folium.raster_layers.ImageOverlay(
-        image=img_base64,
+        image="data:image/png;base64," + img_base64,
         bounds=[[0,0],[1,1]],
         opacity=1,
     ).add_to(m)
