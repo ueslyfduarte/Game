@@ -502,6 +502,7 @@ else:
         )
 
         # Mira (ponto central)
+        # Mira (ponto central)
         mira_dist = 0.05
         mira_x = [x + dir_x * mira_dist]
         mira_y = [y + dir_y * mira_dist]
@@ -509,7 +510,7 @@ else:
         trace_mira = go.Scatter3d(
             x=mira_x, y=mira_y, z=mira_z,
             mode='markers',
-            marker=dict(size=4, color='white', symbol='cross-thin'),
+            marker=dict(size=6, color='white', symbol='cross'),
             name='Mira'
         )
 
