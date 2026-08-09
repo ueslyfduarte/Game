@@ -1,6 +1,6 @@
 import random
 
-# Definições de armas para loot
+# Definições de armas (mantidas)
 ARMAS_BRANCAS = [
     {"nome": "Faca de cozinha", "dano": (4, 8), "peso": 0.5, "raridade": "comum"},
     {"nome": "Cano de ferro", "dano": (6, 12), "peso": 2.0, "raridade": "comum"},
@@ -38,11 +38,24 @@ MUNICOES = {
     ".50": {"peso": 0.06}
 }
 
+def fora_das_ruas(x, y, ruas):
+    """Verifica se a posição está a pelo menos 0.03 de qualquer linha de rua."""
+    for r in ruas:
+        # rua vertical: x1 == x2
+        if r['x1'] == r['x2']:
+            if abs(x - r['x1']) < 0.03:
+                return False
+        # rua horizontal: y1 == y2
+        if r['y1'] == r['y2']:
+            if abs(y - r['y1']) < 0.03:
+                return False
+    return True
+
 def gerar_mundo():
     predios = []
     ruas = []
     pois = []
-    # Ruas: grade de 100x100 (10 km)
+    # Ruas: grade de 100x100 (10 km), a cada 0.2 km
     for i in range(0, 101, 2):
         x = i * 0.1
         ruas.append({'x1': x, 'y1': 0, 'x2': x, 'y2': 10})
@@ -50,7 +63,6 @@ def gerar_mundo():
         y = j * 0.1
         ruas.append({'x1': 0, 'y1': y, 'x2': 10, 'y2': y})
 
-    # Tipos de prédios com pesos
     tipos = (
         ['residencial'] * 40 +
         ['comercial'] * 25 +
@@ -60,40 +72,38 @@ def gerar_mundo():
         ['escola'] * 7 +
         ['restaurante'] * 5
     )
-    # Gera 3000 prédios
-    for _ in range(3000):
+    tentativas = 0
+    while len(predios) < 3000 and tentativas < 10000:
         x = random.uniform(0.2, 9.8)
         y = random.uniform(0.2, 9.8)
-        # Altura varia conforme região (centro mais alto)
-        if 3 <= y <= 7:
-            altura = random.uniform(3, 12)
-        else:
-            altura = random.uniform(1, 5)
-        tipo = random.choice(tipos)
-        predios.append({'x': x, 'y': y, 'altura': altura, 'tipo': tipo})
-        # 80% viram pontos de interesse acessíveis
-        if random.random() < 0.8:
-            # Define tier baseado na latitude (y)
-            if y < 3:
-                tier = 1   # sul (fazendas)
-            elif y < 7:
-                tier = 2   # centro
+        if fora_das_ruas(x, y, ruas):
+            if 3 <= y <= 7:
+                altura = random.uniform(3, 12)
             else:
-                tier = 3   # norte (zona de quarentena)
-            pois.append({
-                'id': len(pois),
-                'x': x,
-                'y': y,
-                'tipo': tipo,
-                'tier': tier,
-                'looted': False
-            })
+                altura = random.uniform(1, 5)
+            tipo = random.choice(tipos)
+            predios.append({'x': x, 'y': y, 'altura': altura, 'tipo': tipo})
+            if random.random() < 0.8:
+                if y < 3:
+                    tier = 1
+                elif y < 7:
+                    tier = 2
+                else:
+                    tier = 3
+                pois.append({
+                    'id': len(pois),
+                    'x': x,
+                    'y': y,
+                    'tipo': tipo,
+                    'tier': tier,
+                    'looted': False
+                })
+        tentativas += 1
     return predios, ruas, pois
 
 def gerar_zumbis():
     zumbis = []
     for _ in range(25000):
-        # distribuição: sul (0-3) 10%, centro (3-7) 60%, norte (7-10) 30%
         r = random.random()
         if r < 0.1:
             y = random.uniform(0, 3)
@@ -105,10 +115,7 @@ def gerar_zumbis():
         zumbis.append({'x': x, 'y': y})
     return zumbis
 
-# Tabelas de loot por tipo de prédio e tier (probabilidades cumulativas)
 def get_loot_table(tipo, tier):
-    """Retorna uma lista de (item, probabilidade) onde a soma das probabilidades é a chance total de encontrar algo."""
-    # Itens comuns a todos
     base = []
     if tipo == 'residencial':
         base = [
@@ -171,7 +178,6 @@ def get_loot_table(tipo, tier):
             ("Comida pronta (estragada)", 0.08)
         ]
 
-    # Adiciona armas de fogo e brancas conforme tier (apenas em certos locais)
     armas_extras = []
     if tipo in ('residencial', 'comercial') and tier >= 2:
         armas_extras.append(("Faca de cozinha", 0.02))
@@ -194,11 +200,9 @@ def get_loot_table(tipo, tier):
     if tipo == 'escola' and tier == 3:
         armas_extras.append(("Faca de cozinha", 0.01))
 
-    # Combina listas
     tabela = base + armas_extras
-    # Ajusta probabilidades para que a soma total não ultrapasse 1.0 (100%)
     total_chance = sum(p for _, p in tabela)
-    if total_chance > 0.6:  # limite máximo de chance de achar algo (60% no máximo)
+    if total_chance > 0.6:
         fator = 0.6 / total_chance
         tabela = [(item, p * fator) for item, p in tabela]
     return tabela
